@@ -1,0 +1,635 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cratez</title>
+<link rel="icon" href="data:,">
+<style>
+  input[type=file] { color: var(--muted); font: inherit; font-size: 12px; }
+  input[type=file]::file-selector-button { height: 36px; padding: 0 14px; border-radius: 9px; border: 0; background: rgba(255,255,255,.08); color: #dfe2ff; font: inherit; font-weight: 600; font-size: 12px; cursor: pointer; margin-right: 10px; }
+  input[type=file]::file-selector-button:hover { background: rgba(255,255,255,.14); }
+  :root {
+    --bg: #171a4a; --panel: #151633; --panel-2: #1b1c42; --panel-3: #121330; --card: #181a3d;
+    --line: rgba(255,255,255,.07); --text: #f1f2ff; --muted: #8f93c2; --label: #a4a8d3;
+    --indigo: #3f2ee6; --indigo-2: #5a48ff; --pink: #ff2d7e; --cyan: #34d3ff; --violet: #b14dff;
+    --green: #35e0a1; --amber: #ffb547; --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: Poppins, "Segoe UI", system-ui, -apple-system, sans-serif; color: var(--text);
+    background: var(--bg); overflow: hidden; font-size: 13px; -webkit-font-smoothing: antialiased;
+  }
+  /* neon blobs behind the glass */
+  .blob { position: fixed; border-radius: 50%; filter: blur(70px); opacity: .85; pointer-events: none; animation: drift 26s ease-in-out infinite alternate; }
+  .b1 { width: 60vw; height: 60vw; left: -18vw; top: -28vw; background: radial-gradient(circle, #ff3fb0 0%, #b24dff 45%, transparent 70%); }
+  .b2 { width: 55vw; height: 55vw; right: -14vw; top: -20vw; background: radial-gradient(circle, #36d8ff 0%, #3a6bff 50%, transparent 72%); animation-delay: -9s; }
+  .b3 { width: 70vw; height: 50vw; left: 10vw; bottom: -34vw; background: radial-gradient(circle, #2fd3ff 0%, #ff3fa4 55%, transparent 75%); animation-delay: -17s; }
+  @keyframes drift { to { transform: translate3d(5vw, 4vw, 0) scale(1.08); } }
+
+  .app {
+    position: fixed; inset: 26px; border-radius: 20px; overflow: hidden;
+    background: rgba(21,22,51,.90); backdrop-filter: blur(26px); -webkit-backdrop-filter: blur(26px);
+    border: 1px solid rgba(255,255,255,.08); box-shadow: 0 40px 100px rgba(0,0,0,.5);
+    display: grid; grid-template-columns: 228px 330px 1fr; min-width: 980px;
+  }
+  @media (max-width: 1200px) { .app { grid-template-columns: 200px 290px 1fr; } }
+
+  /* ---------- sidebar */
+  .side { background: rgba(28,29,66,.55); padding: 26px 18px; display: flex; flex-direction: column; border-right: 1px solid var(--line); }
+  .logo { display: flex; align-items: center; gap: 10px; padding: 4px 10px 30px; }
+  .logo-mark { width: 34px; height: 34px; border-radius: 10px; background: linear-gradient(135deg, var(--indigo-2), var(--pink)); display: grid; place-items: center; box-shadow: 0 8px 20px rgba(90,72,255,.35); }
+  .logo-mark svg { width: 20px; height: 20px; }
+  .logo b { font-size: 19px; letter-spacing: .3px; background: linear-gradient(90deg, #fff, #b9c3ff); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .nav { display: flex; flex-direction: column; gap: 4px; }
+  .nav a { display: flex; align-items: center; gap: 12px; padding: 11px 12px; border-radius: 11px; color: var(--muted); text-decoration: none; font-weight: 500; cursor: pointer; transition: .15s; }
+  .nav a svg { width: 20px; height: 20px; opacity: .9; }
+  .nav a:hover { color: #fff; background: rgba(255,255,255,.04); }
+  .nav a.active { color: #fff; font-weight: 600; background: linear-gradient(90deg, rgba(99,82,255,.32), rgba(99,82,255,.10)); }
+  .side .foot { margin-top: auto; }
+  .me { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 12px; background: rgba(255,255,255,.04); cursor: pointer; border: 1px solid transparent; }
+  .me:hover { border-color: var(--line); }
+  .me img, .me .ph { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; background: linear-gradient(135deg, var(--cyan), var(--violet)); flex: none; }
+  .me .t { min-width: 0; }
+  .me .t b { display: block; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .me .t span { font-size: 11px; color: var(--muted); }
+
+  /* ---------- downloads column */
+  .dls { background: rgba(14,15,40,.55); display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); }
+  .dls .head { display: flex; align-items: center; gap: 10px; padding: 26px 20px 14px; }
+  .dls .head h2 { font-size: 17px; margin: 0; flex: 1; }
+  .count { font-size: 11px; color: var(--muted); background: rgba(255,255,255,.06); border-radius: 999px; padding: 2px 9px; }
+  .linkbtn { color: var(--muted); font-size: 11px; cursor: pointer; background: none; border: 0; font-family: inherit; }
+  .linkbtn:hover { color: #fff; }
+  .dl-list { overflow-y: auto; padding: 0 10px 20px; flex: 1; }
+  .dl { display: grid; grid-template-columns: 44px 1fr auto; gap: 12px; align-items: center; padding: 11px 12px; border-radius: 12px; cursor: pointer; transition: .15s; }
+  .dl:hover { background: rgba(255,255,255,.04); }
+  .dl.sel { background: rgba(60,58,140,.45); }
+  .thumb { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; background: #2a2c63; display: grid; place-items: center; font-weight: 700; color: #fff; flex: none; overflow: hidden; }
+  .thumb.sq { border-radius: 12px; }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .dl .t { min-width: 0; }
+  .dl .t b { display: block; font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dl .t .sub { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+  .status { display: flex; align-items: center; gap: 6px; font-size: 11px; margin-top: 4px; color: var(--label); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
+  .st-downloading .dot { background: var(--cyan); box-shadow: 0 0 8px var(--cyan); }
+  .st-done .dot { background: var(--green); }
+  .st-failed .dot { background: var(--pink); }
+  .st-unavailable .dot, .st-paid .dot { background: var(--amber); }
+  .bar { height: 3px; border-radius: 3px; background: rgba(255,255,255,.08); margin-top: 6px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--cyan), var(--violet)); transition: width .4s; }
+  .ibtn { width: 32px; height: 32px; border-radius: 9px; border: 0; background: rgba(255,255,255,.06); color: #cfd3ff; display: grid; place-items: center; cursor: pointer; transition: .15s; }
+  .ibtn svg { width: 16px; height: 16px; }
+  .ibtn:hover { background: var(--pink); color: #fff; }
+  .ibtn.indigo:hover { background: var(--indigo-2); }
+  .empty { color: var(--muted); text-align: center; padding: 40px 20px; font-size: 12px; line-height: 1.6; }
+
+  /* ---------- main */
+  .main { display: flex; flex-direction: column; min-height: 0; background: rgba(12,13,36,.35); }
+  .top { display: flex; gap: 10px; align-items: center; padding: 22px 24px 14px; }
+  .search { flex: 1; display: flex; align-items: center; gap: 10px; background: #1b1d48; border: 1px solid #2c2f68; border-radius: 10px; padding: 0 14px; height: 46px; }
+  .search:focus-within { border-color: var(--indigo-2); box-shadow: 0 0 0 3px rgba(90,72,255,.2); }
+  .search svg { width: 18px; height: 18px; color: var(--muted); flex: none; }
+  .search input { flex: 1; background: none; border: 0; outline: 0; color: #fff; font: inherit; font-size: 13px; min-width: 0; }
+  .search input::placeholder { color: #6f73a6; }
+  select, input.txt, textarea.txt { background: #1b1d48; border: 1px solid #2c2f68; color: #fff; border-radius: 10px; padding: 0 12px; height: 46px; font: inherit; font-size: 13px; outline: 0; }
+  select { appearance: none; -webkit-appearance: none; padding-right: 32px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238f93c2' stroke-width='2.5'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; cursor: pointer; }
+  select:focus, input.txt:focus, textarea.txt:focus { border-color: var(--indigo-2); }
+  select option { background: #1b1d48; }
+  .btn { height: 46px; padding: 0 18px; border-radius: 10px; border: 0; font: inherit; font-weight: 600; font-size: 13px; color: #fff; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; transition: .15s; white-space: nowrap; }
+  .btn svg { width: 17px; height: 17px; }
+  .btn.indigo { background: var(--indigo); box-shadow: 0 10px 24px rgba(63,46,230,.35); }
+  .btn.indigo:hover { background: var(--indigo-2); }
+  .btn.pink { background: var(--pink); box-shadow: 0 10px 24px rgba(255,45,126,.3); }
+  .btn.pink:hover { filter: brightness(1.1); }
+  .btn.ghost { background: rgba(255,255,255,.06); color: #dfe2ff; }
+  .btn.ghost:hover { background: rgba(255,255,255,.12); }
+  .btn.sm { height: 36px; padding: 0 14px; font-size: 12px; border-radius: 9px; }
+  .btn:disabled { opacity: .5; cursor: default; filter: none; }
+  .avatar { width: 46px; height: 46px; border-radius: 12px; object-fit: cover; background: linear-gradient(135deg, var(--cyan), var(--violet)); cursor: pointer; flex: none; }
+  .filters { display: flex; align-items: center; gap: 10px; padding: 0 24px 14px; flex-wrap: wrap; }
+  .chip { display: inline-flex; align-items: center; gap: 7px; padding: 7px 12px; border-radius: 999px; font-size: 12px; cursor: pointer; border: 1px solid var(--line); color: var(--muted); user-select: none; transition: .15s; }
+  .chip.on { color: #fff; border-color: rgba(90,72,255,.6); background: rgba(90,72,255,.18); }
+  .chip .sw { width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: .5; }
+  .chip.on .sw { opacity: 1; }
+  .chip[data-p=soundcloud].on .sw { background: #ff7a1a; } .chip[data-p=bandcamp].on .sw { background: #1da0c3; } .chip[data-p=hearthis].on .sw { background: #ff2d7e; }
+  .filters .sp { flex: 1; }
+  .filters .note { font-size: 11px; color: var(--muted); }
+  .content { flex: 1; overflow-y: auto; padding: 0 24px 24px; min-height: 0; }
+  .results { display: flex; flex-direction: column; gap: 4px; }
+  .row { display: grid; grid-template-columns: 52px 1fr auto auto; gap: 14px; align-items: center; padding: 10px 12px; border-radius: 12px; transition: .15s; }
+  .row:hover { background: rgba(255,255,255,.04); }
+  .row .thumb { width: 52px; height: 52px; border-radius: 12px; }
+  .row .t { min-width: 0; }
+  .row .t b { display: block; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .t .sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .t .sub a { color: inherit; text-decoration: none; } .row .t .sub a:hover { color: #fff; }
+  .badge { font-size: 10.5px; font-weight: 600; letter-spacing: .3px; padding: 4px 9px; border-radius: 999px; text-transform: uppercase; white-space: nowrap; }
+  .badge.orig { background: rgba(52,211,255,.14); color: var(--cyan); }
+  .badge.stream { background: rgba(177,77,255,.16); color: #d39bff; }
+  .badge.none { background: rgba(255,255,255,.06); color: var(--muted); }
+  .badge.check { background: rgba(255,181,71,.14); color: var(--amber); }
+  .plat { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+  .plat.soundcloud { background: #ff7a1a; } .plat.bandcamp { background: #1da0c3; } .plat.hearthis { background: #ff2d7e; }
+  .dlbtn { width: 40px; height: 40px; border-radius: 11px; border: 0; background: var(--indigo); color: #fff; display: grid; place-items: center; cursor: pointer; box-shadow: 0 8px 18px rgba(63,46,230,.35); transition: .15s; }
+  .dlbtn svg { width: 18px; height: 18px; }
+  .dlbtn:hover { background: var(--indigo-2); transform: translateY(-1px); }
+  .dlbtn.done { background: rgba(53,224,161,.15); color: var(--green); box-shadow: none; cursor: default; transform: none; }
+  .toolbar { display: flex; align-items: center; gap: 10px; margin: 6px 0 14px; }
+  .toolbar h3 { margin: 0; font-size: 15px; flex: 1; }
+  .hint { color: var(--muted); font-size: 12px; line-height: 1.6; }
+  .spin { width: 18px; height: 18px; border: 2px solid rgba(255,255,255,.15); border-top-color: var(--cyan); border-radius: 50%; animation: rot .8s linear infinite; display: inline-block; vertical-align: middle; }
+  @keyframes rot { to { transform: rotate(360deg); } }
+
+  /* detail */
+  .detail h1 { font-size: 26px; margin: 10px 0 18px; display: flex; align-items: center; gap: 14px; }
+  .detail h1 span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+  .card .f { padding: 16px 22px; border-bottom: 1px solid var(--line); }
+  .card .f:last-child { border-bottom: 0; }
+  .card .f label { display: block; font-size: 11.5px; color: var(--label); margin-bottom: 5px; }
+  .card .f .v { font-size: 14px; font-weight: 600; word-break: break-all; }
+  .card .f .v a { color: #fff; text-decoration: none; } .card .f .v a:hover { color: var(--cyan); }
+  .meta { color: var(--muted); font-size: 12px; line-height: 2; margin-top: 22px; }
+  .sqbtn { width: 46px; height: 46px; border-radius: 11px; border: 0; color: #fff; display: grid; place-items: center; cursor: pointer; flex: none; }
+  .sqbtn svg { width: 18px; height: 18px; }
+  .sqbtn.indigo { background: var(--indigo); } .sqbtn.indigo:hover { background: var(--indigo-2); }
+  .sqbtn.pink { background: var(--pink); } .sqbtn.pink:hover { filter: brightness(1.1); }
+  .sqbtn.ghost { background: rgba(255,255,255,.07); } .sqbtn.ghost:hover { background: rgba(255,255,255,.14); }
+
+  /* genres & settings */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+  .gcard { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .gcard label { font-size: 11px; color: var(--label); }
+  .gcard input.txt { height: 38px; width: 100%; }
+  .gcard .acts { display: flex; gap: 8px; margin-top: 4px; }
+  .gcard .acts .sp { flex: 1; }
+  .section { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px 22px; margin-bottom: 16px; }
+  .section h3 { margin: 0 0 14px; font-size: 14px; }
+  .frow { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+  .frow label.l { width: 170px; font-size: 12px; color: var(--label); flex: none; }
+  .frow input.txt { flex: 1; min-width: 200px; height: 40px; }
+  .frow select { height: 40px; }
+  .radio { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); cursor: pointer; margin-bottom: 8px; }
+  .radio.on { border-color: rgba(90,72,255,.6); background: rgba(90,72,255,.12); }
+  .radio input { margin-top: 3px; accent-color: var(--indigo-2); }
+  .radio b { display: block; font-size: 13px; }
+  .radio span { font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+  .ok { color: var(--green); } .warn { color: var(--amber); } .err { color: var(--pink); }
+  .toast { position: fixed; left: 50%; bottom: 44px; transform: translateX(-50%); background: #23245a; border: 1px solid var(--line); color: #fff; padding: 10px 18px; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.4); font-size: 12.5px; opacity: 0; transition: .25s; pointer-events: none; z-index: 9; }
+  .toast.show { opacity: 1; }
+  code { background: rgba(255,255,255,.07); padding: 2px 6px; border-radius: 5px; font-size: 11.5px; }
+  ::-webkit-scrollbar { width: 8px; } ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 8px; } ::-webkit-scrollbar-track { background: transparent; }
+  .hidden { display: none !important; }
+  .switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; font-size: 12.5px; color: var(--text); }
+  .switch input { display: none; }
+  .switch i { width: 38px; height: 22px; border-radius: 999px; background: rgba(255,255,255,.12); position: relative; flex: none; transition: .2s; }
+  .switch i::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: .2s; }
+  .switch input:checked + i { background: var(--indigo-2); }
+  .switch input:checked + i::after { left: 19px; }
+  .acct { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; }
+  .acct-h { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .acct-h .sp { flex: 1; }
+  .frow .btn.sm { height: 40px; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+  <symbol id="i-heart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.5 12.6 12 20l-7.5-7.4A5 5 0 0 1 12 6.1a5 5 0 0 1 7.5 6.5Z"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+  <symbol id="i-cog" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12m0 0 5-5m-5 5-5-5M4 20h16"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5L20 7"/></symbol>
+  <symbol id="i-retry" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></symbol>
+  <symbol id="i-ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-wave" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><path d="M4 12v2M8 8v8M12 5v14M16 9v6M20 11v2"/></symbol>
+  <symbol id="i-bag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8h12l1 13H5L6 8Z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/></symbol>
+</svg>
+<div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div>
+
+<div class="app">
+  <!-- sidebar -->
+  <aside class="side">
+    <div class="logo"><div class="logo-mark"><svg><use href="#i-wave"/></svg></div><b>Cratez</b></div>
+    <nav class="nav">
+      <a data-view="search" class="active"><svg><use href="#i-search"/></svg>Search</a>
+      <a data-view="likes"><svg><use href="#i-heart"/></svg>My music</a>
+      <a data-view="genres"><svg><use href="#i-grid"/></svg>Genres</a>
+      <a data-view="settings"><svg><use href="#i-cog"/></svg>Settings</a>
+    </nav>
+    <div class="foot">
+      <div class="me" id="me" onclick="view('settings')"><div class="ph"></div><div class="t"><b>Not signed in</b><span>Accounts in Settings</span></div></div>
+    </div>
+  </aside>
+
+  <!-- downloads -->
+  <section class="dls">
+    <div class="head"><h2>Downloads</h2><span class="count" id="dl-count">0</span><button class="linkbtn" onclick="api('/api/clear').then(refresh)">Clear finished</button></div>
+    <div class="dl-list" id="dl-list"><div class="empty">Nothing yet.<br>Search for edits, blends and remixes and hit download.</div></div>
+  </section>
+
+  <!-- main -->
+  <section class="main">
+    <!-- SEARCH -->
+    <div id="v-search" class="view" style="display:contents">
+      <div class="top">
+        <label class="search"><svg><use href="#i-search"/></svg><input id="q" placeholder="Search edits, blends, remixes… or paste a SoundCloud / Bandcamp / hearthis.at link" onkeydown="if(event.key==='Enter')doSearch()"></label>
+        <select id="genre-sel" title="Filter by genre - results also download into this folder"></select>
+        <select id="days-sel" title="Only tracks added in this window">
+          <option value="1">Last 24 hours</option><option value="7">Last week</option><option value="30">Last month</option><option value="365">Last year</option><option value="0">Any time</option>
+        </select>
+        <button class="btn indigo" onclick="doSearch()"><svg><use href="#i-search"/></svg>Search</button>
+        <img class="avatar hidden" id="avatar" onclick="view('settings')" alt="">
+      </div>
+      <div class="filters">
+        <span class="chip on" data-p="soundcloud" onclick="togglePlat(this)"><i class="sw"></i>SoundCloud</span>
+        <span class="chip on" data-p="bandcamp" onclick="togglePlat(this)"><i class="sw"></i>Bandcamp</span>
+        <span class="chip on" data-p="hearthis" onclick="togglePlat(this)"><i class="sw"></i>hearthis.at</span>
+        <span class="chip on" id="kw-chip" onclick="this.classList.toggle('on')" title="Only titles containing your keywords: edit, bootleg, VIP, remix, pack, blend, flip, mashup, rework, refix"><i class="sw"></i>Edits &amp; remixes only</span>
+        <span class="sp"></span>
+        <span class="note" id="res-note"></span>
+        <button class="btn pink sm hidden" id="dl-all" onclick="downloadAll()"><svg><use href="#i-down"/></svg>Download all</button>
+      </div>
+      <div class="content"><div class="results" id="results"><div class="empty">Pick a genre, type what you're after (or leave it blank to get everything tagged with that genre), then Search.<br>Paste a link to pull a track, a set, an artist page or someone's likes.</div></div></div>
+    </div>
+
+    <!-- MY MUSIC -->
+    <div id="v-likes" class="view hidden" style="display:contents">
+      <div class="top"><h2 style="margin:0;font-size:20px;flex:1">My music</h2>
+        <select id="likes-genre" title="Folder these download into"></select>
+        <button class="btn indigo" id="likes-load" onclick="loadMine('likes')"><svg><use href="#i-heart"/></svg>SoundCloud likes</button>
+        <button class="btn indigo" id="purch-load" onclick="loadMine('purchases')"><svg><use href="#i-bag"/></svg>Bandcamp purchases</button>
+        <button class="btn pink hidden" id="likes-all" onclick="downloadAll('likes')"><svg><use href="#i-down"/></svg>Download all</button>
+      </div>
+      <div class="filters"><span class="note" id="likes-note">Sign in under Settings › Accounts, then load your SoundCloud likes or your Bandcamp purchases here. Purchases come down in the quality you chose in Settings (albums as full folders).</span></div>
+      <div class="content"><div class="results" id="likes-results"></div></div>
+    </div>
+
+    <!-- GENRES -->
+    <div id="v-genres" class="view hidden" style="display:contents">
+      <div class="top"><h2 style="margin:0;font-size:20px;flex:1">Genres</h2>
+        <button class="btn ghost" onclick="addGenre()"><svg><use href="#i-plus"/></svg>Add genre</button>
+        <button class="btn pink" id="collect-all" onclick="collect(null)"><svg><use href="#i-bolt"/></svg>Collect all genres</button>
+      </div>
+      <div class="filters"><span class="note" id="collect-note">"Collect" searches every term of a genre on all three sites, keeps the recent tracks whose titles match your keywords, and queues them into that genre's folder.</span></div>
+      <div class="content"><div class="grid" id="genre-grid"></div></div>
+    </div>
+
+    <!-- SETTINGS -->
+    <div id="v-settings" class="view hidden" style="display:contents">
+      <div class="top"><h2 style="margin:0;font-size:20px;flex:1">Settings</h2>
+        <button class="btn indigo" onclick="saveSettings()"><svg><use href="#i-check"/></svg>Save settings</button>
+        <button class="btn ghost" onclick="api('/api/quit')">Quit Cratez</button></div>
+      <div class="content" style="padding-top:6px">
+
+        <div class="section">
+          <h3>Accounts</h3>
+          <div class="acct" id="acct-sc">
+            <div class="acct-h"><span class="plat soundcloud"></span><b>SoundCloud</b><span class="hint" id="sc-status">not signed in</span><span class="sp"></span><button class="btn ghost sm hidden" id="sc-out" onclick="logout('soundcloud')">Sign out</button></div>
+            <div class="frow" id="sc-in"><label class="l">oauth_token</label><input class="txt" id="sc-token" type="password" placeholder="paste the oauth_token cookie value"><button class="btn indigo sm" onclick="login('soundcloud','sc-token')">Sign in</button></div>
+            <div class="hint">Unlocks most uploaders' free downloads and <b>My music › SoundCloud likes</b>. Find it: sign in to soundcloud.com, press <code>F12</code> › Application › Cookies › soundcloud.com › <code>oauth_token</code>.</div>
+          </div>
+          <div class="acct" id="acct-bc">
+            <div class="acct-h"><span class="plat bandcamp"></span><b>Bandcamp</b><span class="hint" id="bc-status">not signed in</span><span class="sp"></span><button class="btn ghost sm hidden" id="bc-out" onclick="logout('bandcamp')">Sign out</button></div>
+            <div class="frow" id="bc-in"><label class="l">identity cookie</label><input class="txt" id="bc-token" type="password" placeholder="paste the identity cookie value"><button class="btn indigo sm" onclick="login('bandcamp','bc-token')">Sign in</button></div>
+            <div class="hint">Unlocks <b>My music › Bandcamp purchases</b> - everything you've bought, re-downloaded in the quality below. Find it: sign in to bandcamp.com, <code>F12</code> › Application › Cookies › bandcamp.com › <code>identity</code>.</div>
+          </div>
+          <div class="frow" style="margin-top:14px"><label class="l">or import a cookies.txt</label><input type="file" id="cookiefile" accept=".txt" onchange="importCookies(this)"><span class="hint">exported with a "Get cookies.txt LOCALLY" style extension while signed in to either site</span></div>
+          <div class="hint">Tokens stay on this computer (your app data folder) and are only ever sent to the site they belong to.</div>
+        </div>
+
+        <div class="section">
+          <h3>Library</h3>
+          <div class="frow"><label class="l">Download folder</label><input class="txt" id="out-dir"><button class="btn ghost sm" onclick="browseFolder()">Browse…</button><button class="btn ghost sm" onclick="api('/api/open',{})">Open</button></div>
+          <div class="frow"><label class="l">Folder layout</label><select id="layout"></select><span class="hint" id="layout-eg"></span></div>
+          <div class="frow"><label class="l">File names</label><label class="switch"><input type="checkbox" id="append-id"><i></i>Append the track id, e.g. <code>Title [123456].mp3</code> (prevents clashes between same-named edits)</label></div>
+        </div>
+
+        <div class="section">
+          <h3>Audio &amp; tags</h3>
+          <div class="frow" style="align-items:flex-start"><label class="l" style="padding-top:12px">When no original file is offered</label><div style="flex:1">
+            <label class="radio" id="mode-a"><input type="radio" name="mode" value="original_or_stream"><div><b>Save the stream instead (SoundCloud &amp; hearthis.at)</b><span>160 kbps AAC / 128 kbps MP3 - fine for listening and practice, lower than the WAV/320 originals DJs give away. Never used on Bandcamp, where only free downloads and your purchases are taken.</span></div></label>
+            <label class="radio" id="mode-b"><input type="radio" name="mode" value="original_only"><div><b>Originals only</b><span>Skip anything the uploader hasn't made downloadable; it's listed in Downloads with a link so you can grab it from their Hypeddit / Bandcamp page.</span></div></label>
+          </div></div>
+          <div class="frow"><label class="l">Metadata tags</label><label class="switch"><input type="checkbox" id="tags"><i></i>Write title, artist and genre tags <span class="hint">(genre = the Cratez folder, so Serato / Rekordbox sort them)</span></label></div>
+          <div class="frow"><label class="l">Cover art</label><label class="switch"><input type="checkbox" id="cover-art"><i></i>Embed the artwork in MP3 / M4A / FLAC files</label></div>
+          <div class="frow"><label class="l">Streams</label><label class="switch"><input type="checkbox" id="convert-streams"><i></i>Convert saved streams to MP3 320 <span class="hint">(originals are never converted; needs ffmpeg)</span></label></div>
+          <div class="frow"><label class="l">Bandcamp quality</label><select id="bc-quality"><option value="lossless">Lossless - FLAC / WAV when offered</option><option value="mp3-320">MP3 320</option></select></div>
+          <div class="frow"><label class="l">Downloads at once</label><select id="parallel"><option>1</option><option>2</option><option>3</option><option>4</option></select><span class="hint">1 is kindest to the sites; 2-3 is fine for a big Collect run</span></div>
+          <div class="hint" id="ffmpeg-note"></div>
+        </div>
+
+        <div class="section">
+          <h3>Serato DJ</h3>
+          <div class="frow"><label class="l">Library</label><span class="hint" id="serato-status"></span></div>
+          <div class="frow"><label class="l">Crates</label><label class="switch"><input type="checkbox" id="serato-enabled"><i></i>Add every download to a Serato crate: <code><span id="serato-eg">Cratez</span> › Genre</code></label></div>
+          <div class="frow"><label class="l">Crate name</label><input class="txt" id="serato-crate" style="max-width:220px"><label class="l" style="width:auto;margin-left:10px">_Serato_ folder</label><input class="txt" id="serato-dir" placeholder="auto-detected"></div>
+          <div class="frow"><label class="l"></label><button class="btn ghost sm" onclick="seratoRebuild()">Add all finished downloads to crates now</button><span class="hint">Serato reads crates on launch - close it before Cratez writes, reopen to see them. Files on another drive get crates in that drive's own _Serato_ folder, as Serato expects.</span></div>
+        </div>
+
+        <div class="section">
+          <h3>Searching</h3>
+          <div class="frow"><label class="l">Title keywords</label><input class="txt" id="keywords" placeholder="edit, bootleg, vip, remix, pack, blend, flip, mashup, rework, refix"></div>
+          <div class="frow"><label class="l">Default time window</label><select id="days-def"><option value="1">Last 24 hours</option><option value="7">Last week</option><option value="30">Last month</option><option value="365">Last year</option><option value="0">Any time</option></select>
+            <label class="l" style="width:auto;margin-left:10px">Results per search</label><select id="count-def"><option>50</option><option>100</option><option>200</option></select></div>
+          <div class="frow"><label class="l">Skip tracks shorter than</label><select id="min-sec"><option value="0">don't skip</option><option value="30">30 seconds</option><option value="45">45 seconds</option><option value="60">1 minute</option><option value="90">90 seconds</option></select>
+            <label class="l" style="width:auto;margin-left:10px">longer than</label><select id="max-sec"><option value="0">don't skip</option><option value="600">10 minutes</option><option value="900">15 minutes</option><option value="1800">30 minutes</option></select><span class="hint">skips snippets and full mixes</span></div>
+        </div>
+
+        <div class="section">
+          <h3>Maintenance</h3>
+          <div class="frow"><button class="btn ghost sm" onclick="exportCsv()">Export "not downloaded" list (CSV)</button><button class="btn ghost sm" onclick="api('/api/open_file',{path: state.log_file})">Open log folder</button><button class="btn ghost sm" onclick="clearAll()">Clear download history</button><button class="btn ghost sm" onclick="resetSettings()">Reset settings</button></div>
+          <div class="hint" id="about"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DETAIL -->
+    <div id="v-detail" class="view hidden" style="display:contents">
+      <div class="top"><button class="sqbtn ghost" onclick="view(lastView)"><svg><use href="#i-back"/></svg></button><h2 style="margin:0;font-size:16px;flex:1;color:var(--muted);font-weight:500">Download</h2></div>
+      <div class="content detail" id="detail"></div>
+    </div>
+  </section>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let state = null, results = [], likes = [], selected = null, lastView = 'search', curView = 'search', searching = false, settingsDirty = false;
+
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} : {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Cratez': '1'}, body: JSON.stringify(body)});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+function toast(msg, ms = 2600) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), ms); }
+function view(name) {
+  if (name !== 'detail') lastView = name;
+  curView = name;
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('hidden', v.id !== 'v-' + name));
+  document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.view === name));
+  if (name === 'genres') renderGenres();
+  if (name === 'settings') { settingsDirty = false; renderSettings(); }
+}
+document.querySelectorAll('.nav a').forEach(a => a.onclick = () => view(a.dataset.view));
+
+// ---------------- state polling
+async function refresh() {
+  try { state = await api('/api/state'); } catch (e) { return; }
+  renderDownloads(); renderUser();
+  if (curView === 'genres') renderCollect();
+  if (curView === 'settings' && !settingsDirty) renderAccounts();
+}
+setInterval(refresh, 1500);
+setInterval(() => fetch('/api/ping').catch(() => {}), 3000);
+
+function thumb(t, cls = '') {
+  if (t.artwork) return `<div class="thumb ${cls}"><img src="${esc(t.artwork)}" loading="lazy" onerror="this.parentNode.textContent='${esc((t.title || '?')[0].toUpperCase())}'"></div>`;
+  return `<div class="thumb ${cls}">${esc((t.title || '?')[0].toUpperCase())}</div>`;
+}
+function fmtDur(s) { return s ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` : ''; }
+
+// ---------------- downloads column
+const STATUS = { queued: 'Queued', downloading: 'Downloading', done: 'Saved', failed: 'Failed', unavailable: 'No free download', paid: 'Not free on Bandcamp' };
+let lastDl = '';
+function renderDownloads(force) {
+  const list = state.downloads;
+  const sig = JSON.stringify(list) + selected + curView;
+  if (!force && sig === lastDl) return;   // nothing changed: don't redraw (keeps thumbnails from reloading)
+  lastDl = sig;
+  $('#dl-count').textContent = list.length;
+  const el = $('#dl-list');
+  if (!list.length) { el.innerHTML = '<div class="empty">Nothing yet.<br>Search for edits, blends and remixes and hit download.</div>'; return; }
+  el.innerHTML = list.map(r => {
+    const t = r.track, st = r.status;
+    let txt = STATUS[st];
+    if (st === 'downloading') txt += ` ${r.pct || 0}%`;
+    if (st === 'done' && r.quality) txt += ` · ${r.quality}`;
+    const act = st === 'done' ? `<button class="ibtn" title="Show in folder" onclick="event.stopPropagation();api('/api/open',{id:'${r.id}'})"><svg><use href="#i-folder"/></svg></button>`
+      : (st === 'failed' ? `<button class="ibtn indigo" title="Retry" onclick="event.stopPropagation();api('/api/retry',{id:'${r.id}'}).then(refresh)"><svg><use href="#i-retry"/></svg></button>`
+      : (st === 'unavailable' || st === 'paid') ? `<a class="ibtn" title="Open page" href="${esc(t.url)}" target="_blank" onclick="event.stopPropagation()"><svg><use href="#i-ext"/></svg></a>` : '');
+    return `<div class="dl ${selected === r.id ? 'sel' : ''}" onclick="showDetail('${r.id}')">
+      ${thumb(t)}
+      <div class="t"><b title="${esc(t.title)}">${esc(t.title)}</b><div class="sub">${esc(t.uploader)}${r.genre ? ' · ' + esc(r.genre) : ''}</div>
+        <div class="status st-${st}"><i class="dot"></i>${esc(txt)}</div>${st === 'downloading' ? `<div class="bar"><i style="width:${r.pct || 0}%"></i></div>` : ''}</div>
+      ${act}</div>`;
+  }).join('');
+  if (selected && curView === 'detail') renderDetail();
+}
+function showDetail(id) { selected = id; view('detail'); renderDetail(); renderDownloads(true); }
+function renderDetail() {
+  const r = state.downloads.find(x => x.id === selected);
+  if (!r) { view(lastView); return; }
+  const t = r.track, d = s => s ? new Date(s * 1000).toLocaleString() : '-';
+  $('#detail').innerHTML = `
+    <h1>${thumb(t, 'sq')}<span title="${esc(t.title)}">${esc(t.title)}</span>
+      <button class="sqbtn indigo" title="${r.path ? 'Show in folder' : 'Open download folder'}" onclick="api('/api/open',{id:'${r.id}'})"><svg><use href="#i-folder"/></svg></button>
+      ${['failed', 'unavailable', 'paid'].includes(r.status) ? `<button class="sqbtn ghost" title="Retry" onclick="api('/api/retry',{id:'${r.id}'}).then(refresh)"><svg><use href="#i-retry"/></svg></button>` : ''}
+      <button class="sqbtn pink" title="Remove from list (keeps the file)" onclick="api('/api/remove',{id:'${r.id}'}).then(()=>{view(lastView);refresh()})"><svg><use href="#i-trash"/></svg></button></h1>
+    <div class="card">
+      <div class="f"><label>Link</label><div class="v"><a href="${esc(t.url)}" target="_blank">${esc(t.url)}</a></div></div>
+      <div class="f"><label>Uploader</label><div class="v">${esc(t.uploader)}<span class="hint"> · <span class="plat ${t.platform}"></span>${esc(state.platforms[t.platform])}${t.purchase ? ' purchase' : ''}${t.tag ? ' · ' + esc(t.tag) : ''}</span></div></div>
+      <div class="f"><label>Genre folder</label><div class="v">${esc(r.genre || 'Ungrouped')}</div></div>
+      <div class="f"><label>Status</label><div class="v st-${r.status}"><span class="status" style="font-size:14px;margin:0"><i class="dot"></i>${esc(STATUS[r.status])}${r.status === 'downloading' ? ' ' + (r.pct || 0) + '%' : ''}${r.quality ? ' · ' + esc(r.quality) : ''}</span>${r.error ? `<div class="hint err" style="margin-top:6px">${esc(r.error)}</div>` : ''}</div></div>
+      ${r.path ? `<div class="f"><label>File</label><div class="v" style="font-weight:500;font-size:12.5px">${esc(r.path)}</div></div>` : ''}
+    </div>
+    <div class="meta">Added: ${d(r.added)}<br>Finished: ${d(r.finished)}${t.created ? '<br>' + (t.purchase ? 'Purchased' : 'Uploaded') + ': ' + esc(t.created) : ''}</div>`;
+}
+
+// ---------------- user / selects
+function renderUser() {
+  const u = state.user, b = state.bc_user, me = $('#me');
+  if (u || b) {
+    const who = u ? u.username : b.username;
+    me.innerHTML = `${u && u.avatar ? `<img src="${esc(u.avatar)}" alt="">` : '<div class="ph"></div>'}<div class="t"><b>${esc(who)}</b><span>${u && b ? 'SoundCloud + Bandcamp' : u ? 'SoundCloud' : 'Bandcamp'} · signed in</span></div>`;
+    $('#avatar').classList.toggle('hidden', !(u && u.avatar)); if (u && u.avatar) $('#avatar').src = u.avatar;
+  } else {
+    me.innerHTML = '<div class="ph"></div><div class="t"><b>Not signed in</b><span>Accounts in Settings</span></div>';
+    $('#avatar').classList.add('hidden');
+  }
+  const names = state.settings.genres.map(g => g.name);
+  for (const [id, first] of [['genre-sel', '<option value="">All genres · Ungrouped folder</option>'], ['likes-genre', '<option value="My music">Into folder: My music</option>']]) {
+    const sel = $('#' + id), cur = sel.value;
+    const html = first + names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+    if (sel.innerHTML !== html) { sel.innerHTML = html; if ([...sel.options].some(o => o.value === cur)) sel.value = cur; }
+  }
+  if (!$('#days-sel').dataset.set) { $('#days-sel').value = String(state.settings.days); $('#days-sel').dataset.set = 1;
+    document.querySelectorAll('.chip[data-p]').forEach(c => c.classList.toggle('on', state.settings.platforms[c.dataset.p] !== false)); }
+}
+function togglePlat(el) {
+  el.classList.toggle('on');
+  const p = {}; document.querySelectorAll('.chip[data-p]').forEach(c => p[c.dataset.p] = c.classList.contains('on'));
+  api('/api/settings', {platforms: p});
+}
+
+// ---------------- search / result rows
+function badge(t) {
+  if (t.purchase) return '<span class="badge orig">purchased</span>';
+  if (t.platform === 'bandcamp' && t.downloadable == null) return '<span class="badge check">free? check</span>';
+  if (t.downloadable) return '<span class="badge orig">original</span>';
+  if (state.settings.mode === 'original_or_stream' && t.platform !== 'bandcamp') return '<span class="badge stream">stream</span>';
+  return `<span class="badge none">${t.platform === 'bandcamp' ? 'paid' : 'no free dl'}</span>`;
+}
+function rows(list, target) {
+  const queued = new Set((state?.downloads || []).map(r => r.track.key));
+  target.innerHTML = list.map((t, i) => `<div class="row">
+    ${thumb(t)}
+    <div class="t"><b title="${esc(t.title)}">${esc(t.title)}</b><div class="sub"><span class="plat ${t.platform}"></span>${esc(t.uploader)}${t.created ? ' · ' + esc(t.created) : ''}${t.duration ? ' · ' + fmtDur(t.duration) : ''}${t.tag ? ' · ' + esc(t.tag) : ''} · <a href="${esc(t.url)}" target="_blank">open ↗</a></div></div>
+    ${badge(t)}
+    <button class="dlbtn ${queued.has(t.key) ? 'done' : ''}" data-i="${i}" onclick="downloadOne(this, '${target.id}')" title="${queued.has(t.key) ? 'Already in Downloads' : 'Download'}"><svg><use href="#${queued.has(t.key) ? 'i-check' : 'i-down'}"/></svg></button>
+  </div>`).join('') || '<div class="empty">No matches. Try another word, a wider time window, or switch off the keyword filter.</div>';
+}
+async function doSearch() {
+  if (searching) return;
+  const q = $('#q').value.trim(), genre = $('#genre-sel').value;
+  if (!q && !genre) { toast('Type something or pick a genre'); return; }
+  searching = true; $('#res-note').innerHTML = '<span class="spin"></span>'; $('#dl-all').classList.add('hidden');
+  const p = {}; document.querySelectorAll('.chip[data-p]').forEach(c => p[c.dataset.p] = c.classList.contains('on'));
+  try {
+    const r = await api('/api/search', {q, genre: genre || null, days: +$('#days-sel').value, only_keywords: $('#kw-chip').classList.contains('on'), platforms: p});
+    results = r.results; rows(results, $('#results'));
+    $('#res-note').textContent = `${results.length} track${results.length === 1 ? '' : 's'}${r.from_url ? ' from link' : ''}${genre ? ' → ' + genre : ''}`;
+    $('#dl-all').classList.toggle('hidden', !results.length);
+  } catch (e) { $('#res-note').textContent = ''; toast('Search failed: ' + e.message, 5000); }
+  searching = false;
+}
+async function downloadOne(btn, listId) {
+  const list = listId === 'likes-results' ? likes : results, t = list[+btn.dataset.i];
+  const genre = listId === 'likes-results' ? $('#likes-genre').value : $('#genre-sel').value;
+  try { const r = await api('/api/download', {tracks: [t], genre}); btn.classList.add('done'); btn.innerHTML = '<svg><use href="#i-check"/></svg>'; toast(r.added ? `Queued → ${genre || 'Ungrouped'}` : 'Already in Downloads'); refresh(); }
+  catch (e) { toast(e.message, 4000); }
+}
+async function downloadAll(which) {
+  const list = which === 'likes' ? likes : results, genre = which === 'likes' ? $('#likes-genre').value : $('#genre-sel').value;
+  if (!list.length) return;
+  try { const r = await api('/api/download', {tracks: list, genre}); toast(`${r.added} queued → ${genre || 'Ungrouped'}`); await refresh(); rows(list, $(which === 'likes' ? '#likes-results' : '#results')); }
+  catch (e) { toast(e.message, 4000); }
+}
+
+// ---------------- my music
+async function loadMine(kind) {
+  const need = kind === 'likes' ? state?.user : state?.bc_user;
+  if (!need) { toast(`Sign in to ${kind === 'likes' ? 'SoundCloud' : 'Bandcamp'} first`); view('settings'); return; }
+  $('#likes-note').innerHTML = `<span class="spin"></span> loading your ${kind === 'likes' ? 'likes' : 'purchases'}…`;
+  $('#likes-load').disabled = $('#purch-load').disabled = true;
+  try {
+    const r = await api(kind === 'likes' ? '/api/likes' : '/api/purchases', {limit: 1000});
+    likes = r.results; rows(likes, $('#likes-results'));
+    $('#likes-note').textContent = `${likes.length} ${kind === 'likes' ? 'liked tracks' : 'purchases'}`;
+    $('#likes-all').classList.toggle('hidden', !likes.length);
+  } catch (e) { $('#likes-note').textContent = ''; toast(e.message, 5000); }
+  $('#likes-load').disabled = $('#purch-load').disabled = false;
+}
+
+// ---------------- genres
+function renderGenres() {
+  const gs = state.settings.genres;
+  $('#genre-grid').innerHTML = gs.map((g, i) => `<div class="gcard" data-i="${i}">
+    <label>Genre folder</label><input class="txt g-name" value="${esc(g.name)}">
+    <label>SoundCloud tags (comma separated - also the words put in front of Bandcamp / hearthis searches)</label><input class="txt g-tags" value="${esc(g.tags.join(', '))}">
+    <label>Search terms</label><input class="txt g-searches" value="${esc(g.searches.join(', '))}">
+    <div class="acts"><button class="btn pink sm" onclick="collect('${esc(g.name)}')"><svg><use href="#i-bolt"/></svg>Collect</button><span class="sp"></span><button class="btn ghost sm" onclick="saveGenres()">Save</button><button class="btn ghost sm" onclick="deleteGenre(${i})"><svg><use href="#i-trash"/></svg></button></div>
+  </div>`).join('');
+  renderCollect();
+}
+function readGenres() {
+  return [...document.querySelectorAll('.gcard')].map(c => ({name: c.querySelector('.g-name').value, tags: c.querySelector('.g-tags').value.split(',').map(s => s.trim()).filter(Boolean), searches: c.querySelector('.g-searches').value.split(',').map(s => s.trim()).filter(Boolean)}));
+}
+async function saveGenres() { await api('/api/settings', {genres: readGenres()}); toast('Genres saved'); await refresh(); renderGenres(); }
+async function addGenre() { const gs = readGenres(); gs.push({name: 'New genre', tags: [], searches: ['edit', 'remix', 'bootleg', 'blend', 'flip']}); await api('/api/settings', {genres: gs}); await refresh(); renderGenres(); }
+async function deleteGenre(i) { const gs = readGenres(); gs.splice(i, 1); await api('/api/settings', {genres: gs}); await refresh(); renderGenres(); }
+async function collect(name) {
+  await api('/api/settings', {genres: readGenres()});
+  const r = await api('/api/collect', {genres: name ? [name] : null});
+  toast(r.started ? `Collecting ${name || 'all genres'}…` : 'Already collecting - wait for it to finish'); refresh();
+}
+function renderCollect() {
+  const c = state.collect, n = $('#collect-note');
+  if (c.running) n.innerHTML = `<span class="spin"></span> ${esc(c.step)} · ${c.found} matches, ${c.queued} queued so far`;
+  else if (c.log && c.log.length) n.textContent = `Last run: ${c.found} matches, ${c.queued} new tracks queued. ${c.step === 'finished' ? '' : c.step}`;
+  $('#collect-all').disabled = !!c.running;
+}
+
+// ---------------- settings
+function renderAccounts() {
+  const u = state.user, b = state.bc_user;
+  $('#sc-status').innerHTML = u ? `<span class="ok">signed in as ${esc(u.username)}</span>` : 'not signed in';
+  $('#sc-in').classList.toggle('hidden', !!u); $('#sc-out').classList.toggle('hidden', !u);
+  $('#bc-status').innerHTML = b ? `<span class="ok">signed in as ${esc(b.username)}</span>` : 'not signed in';
+  $('#bc-in').classList.toggle('hidden', !!b); $('#bc-out').classList.toggle('hidden', !b);
+}
+function renderSettings() {
+  const s = state.settings;
+  renderAccounts();
+  $('#out-dir').value = s.out_dir;
+  $('#layout').innerHTML = Object.entries(state.layouts).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('');
+  $('#layout').value = s.layout; layoutExample();
+  $('#append-id').checked = s.append_id;
+  document.querySelectorAll('input[name=mode]').forEach(r => { r.checked = r.value === s.mode; r.closest('.radio').classList.toggle('on', r.checked); r.onchange = () => { settingsDirty = true; document.querySelectorAll('.radio').forEach(x => x.classList.toggle('on', x.querySelector('input').checked)); }; });
+  $('#tags').checked = s.tags; $('#cover-art').checked = s.cover_art; $('#convert-streams').checked = s.convert_streams;
+  $('#bc-quality').value = s.bc_quality; $('#parallel').value = String(s.parallel);
+  $('#ffmpeg-note').innerHTML = state.ffmpeg ? '<span class="ok">ffmpeg found</span> - tags, cover art and conversion are available.'
+    : `<span class="warn">ffmpeg not found</span> - files are saved untagged and streams stay AAC. Install it with <code>${state.os === 'Darwin' ? 'brew install ffmpeg' : 'winget install Gyan.FFmpeg'}</code> and restart Cratez.`;
+  $('#serato-status').innerHTML = state.serato_found ? `<span class="ok">Serato library found</span> · <code>${esc(s.serato_dir)}</code>` : `<span class="warn">no _Serato_ folder found</span> - install Serato DJ, or type its library path below (usually <code>${state.os === 'Darwin' ? '~/Music/_Serato_' : '%USERPROFILE%\\Music\\_Serato_'}</code>).`;
+  $('#serato-enabled').checked = s.serato_enabled; $('#serato-crate').value = s.serato_crate; $('#serato-dir').value = s.serato_dir; $('#serato-eg').textContent = s.serato_crate;
+  $('#keywords').value = s.keywords.join(', ');
+  $('#days-def').value = String(s.days); $('#count-def').value = String(s.search_count);
+  $('#min-sec').value = String(s.min_seconds); $('#max-sec').value = String(s.max_seconds);
+  $('#about').innerHTML = `Cratez ${esc(state.version)} on ${esc(state.os === 'Darwin' ? 'macOS' : state.os)} · engine: yt-dlp (rebuild with build.bat / build.command now and then to get the newest yt-dlp - the sites change often) · log: <code>${esc(state.log_file)}</code>`;
+  document.querySelectorAll('#v-settings input, #v-settings select').forEach(el => el.oninput = () => { settingsDirty = true; if (el.id === 'layout') layoutExample(); if (el.id === 'serato-crate') $('#serato-eg').textContent = el.value || 'Cratez'; });
+}
+function layoutExample() {
+  const eg = {'genre/uploader': 'House / DJ Name / Title.wav', 'genre': 'House / Title.wav', 'uploader': 'DJ Name / Title.wav', 'flat': 'Title.wav'}[$('#layout').value];
+  $('#layout-eg').textContent = 'e.g. ' + eg;
+}
+async function saveSettings() {
+  const body = {
+    out_dir: $('#out-dir').value, layout: $('#layout').value, append_id: $('#append-id').checked,
+    mode: document.querySelector('input[name=mode]:checked')?.value, tags: $('#tags').checked, cover_art: $('#cover-art').checked,
+    convert_streams: $('#convert-streams').checked, bc_quality: $('#bc-quality').value, parallel: +$('#parallel').value,
+    serato_enabled: $('#serato-enabled').checked, serato_crate: $('#serato-crate').value, serato_dir: $('#serato-dir').value,
+    keywords: $('#keywords').value, days: +$('#days-def').value, search_count: +$('#count-def').value,
+    min_seconds: +$('#min-sec').value, max_seconds: +$('#max-sec').value,
+  };
+  try { await api('/api/settings', body); settingsDirty = false; toast('Settings saved'); await refresh(); renderSettings(); }
+  catch (e) { toast(e.message, 4000); }
+}
+async function browseFolder() {
+  toast('Choose a folder in the window that opened (it may be behind this one)', 4000);
+  try { const r = await api('/api/pick_folder', {start: $('#out-dir').value}); if (r.path) { $('#out-dir').value = r.path; settingsDirty = true; toast('Folder picked - press Save settings'); } }
+  catch (e) { toast(e.message, 4000); }
+}
+async function login(site, inputId) {
+  const token = $('#' + inputId).value.trim(); if (!token) return toast('Paste the cookie value first');
+  try { const r = await api('/api/login', {site, token}); toast(`Signed in to ${state.platforms[site]} as ${r.user.username}`); $('#' + inputId).value = ''; await refresh(); renderAccounts(); }
+  catch (e) { toast(e.message, 6000); }
+}
+async function logout(site) { await api('/api/logout', {site}); toast('Signed out'); await refresh(); renderAccounts(); }
+function importCookies(input) {
+  const f = input.files[0]; if (!f) return;
+  f.text().then(text => api('/api/cookies', {text})).then(r => {
+    const bits = []; if (r.soundcloud) bits.push('SoundCloud: ' + r.soundcloud.username); if (r.bandcamp) bits.push('Bandcamp: ' + r.bandcamp.username);
+    if (r.soundcloud_error) bits.push(r.soundcloud_error); if (r.bandcamp_error) bits.push(r.bandcamp_error);
+    toast(bits.join(' · '), 6000); refresh().then(renderAccounts);
+  }).catch(e => toast(e.message, 6000));
+  input.value = '';
+}
+async function seratoRebuild() { try { const r = await api('/api/serato_rebuild'); toast(`${r.added} track(s) added to Serato crates`); } catch (e) { toast(e.message, 5000); } }
+async function exportCsv() { try { const r = await api('/api/export'); toast('Saved ' + r.path, 5000); } catch (e) { toast(e.message, 5000); } }
+async function clearAll() { if (confirm('Clear the whole download history? Files are kept.')) { await api('/api/clear_all'); refresh(); } }
+async function resetSettings() { if (confirm('Reset all settings to defaults? Accounts stay signed in.')) { await api('/api/reset_settings'); await refresh(); renderSettings(); toast('Settings reset'); } }
+
+refresh();
+</script>
+</body>
+</html>
