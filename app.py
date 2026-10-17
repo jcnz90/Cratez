@@ -138,7 +138,8 @@ def default_serato_dir() -> Path | None:
 class Settings:
     ALLOWED = {"out_dir", "mode", "keywords", "match_keywords", "days", "search_count", "platforms", "genres",
                "sc_user", "bc_user", "tags", "cover_art", "convert_streams", "bc_quality", "layout", "append_id",
-               "parallel", "min_seconds", "max_seconds", "serato_enabled", "serato_dir", "serato_crate"}
+               "parallel", "min_seconds", "max_seconds", "serato_enabled", "serato_dir", "serato_crate",
+               "serato_skip_owned", "serato_latest_days"}
 
     def __init__(self):
         self.path = DATA / "settings.json"
@@ -166,6 +167,7 @@ class Settings:
             "layout": "genre/uploader", "append_id": True, "parallel": 1,
             "min_seconds": 45, "max_seconds": 0,
             "serato_enabled": serato is not None, "serato_dir": str(serato) if serato else "", "serato_crate": APP_NAME,
+            "serato_skip_owned": True, "serato_latest_days": 7,
         }
 
     def get(self, key):
@@ -183,11 +185,12 @@ class Settings:
                     v = [{"name": str(g.get("name", "")).strip() or "Untitled",
                           "tags": [str(s).strip() for s in g.get("tags", []) if str(s).strip()],
                           "searches": [str(s).strip() for s in g.get("searches", []) if str(s).strip()]} for g in v]
-                elif k in ("days", "search_count", "min_seconds", "max_seconds"):
+                elif k in ("days", "search_count", "min_seconds", "max_seconds", "serato_latest_days"):
                     v = max(0, int(v))
                 elif k == "parallel":
                     v = min(4, max(1, int(v)))
-                elif k in ("tags", "cover_art", "convert_streams", "append_id", "serato_enabled", "match_keywords"):
+                elif k in ("tags", "cover_art", "convert_streams", "append_id", "serato_enabled", "match_keywords",
+                           "serato_skip_owned"):
                     v = bool(v)
                 elif k == "layout" and v not in LAYOUTS:
                     v = "genre/uploader"
@@ -557,17 +560,124 @@ def platform_of(url: str) -> str | None:
 
 # ------------------------------------------------------------------------------ Serato crates
 
-class Serato:
-    """Writes Serato DJ subcrates (<crate>%%<Genre>.crate) that point at downloaded files.
-    Format: 'vrsn' + UTF-16BE version, then tag/len/payload chunks; tracks are 'otrk' > 'ptrk'
-    with the path relative to the drive root, forward slashes, no leading slash."""
+NO_WINDOW = 0x08000000 if IS_WIN else 0     # CREATE_NO_WINDOW: no console flash from the frozen app
+OWNED_NOISE = re.compile(r"\[\s*\d+\s*\]|\b(free\s*(download|dl)|out\s*now|premiere|official\s*audio)\b")
 
-    VERSION = "1.0/Serato ScratchLive Crate"
-    COLUMNS = ["song", "artist", "album", "length", "bpm", "key", "added"]
+
+def serato_running() -> bool:
+    """Is Serato DJ (Pro or Lite) open? It only reads crates at launch."""
+    try:
+        if IS_WIN:
+            out = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True,
+                                 timeout=10, creationflags=NO_WINDOW).stdout
+        elif IS_MAC:
+            out = subprocess.run(["ps", "-axo", "comm"], capture_output=True, text=True, timeout=10).stdout
+        else:
+            return False
+    except Exception:
+        return False
+    return "serato dj" in out.lower()
+
+
+def serato_chunks(data: bytes):
+    """(tag, payload) pairs of Serato's tag/len/payload format (crates and 'database V2')."""
+    pos = 0
+    while pos + 8 <= len(data):
+        tag, ln = data[pos:pos + 4], struct.unpack(">I", data[pos + 4:pos + 8])[0]
+        yield tag, data[pos + 8:pos + 8 + ln]
+        pos += 8 + ln
+
+
+class SeratoLibrary:
+    """Reads Serato's 'database V2' so Cratez knows what's already in your library: search
+    results get an "in Serato" mark and Collect skips them. Matches on the song tag, artist +
+    song, and the file name (minus Cratez's [id] and "free download" noise)."""
+
+    MIN_KEY = 6
 
     def __init__(self, settings: Settings):
         self.settings = settings
         self.lock = threading.Lock()
+        self.stamp = None
+        self.keys: set[str] = set()
+        self.count = 0
+
+    @staticmethod
+    def norm(s: str | None) -> str:
+        s = OWNED_NOISE.sub(" ", (s or "").lower())
+        return " ".join(re.sub(r"[\W_]+", " ", s).split())
+
+    def refresh(self):
+        """Re-read the database when it changed (a stat otherwise)."""
+        db = Path(self.settings.get("serato_dir") or "") / "database V2"
+        try:
+            st = db.stat()
+        except OSError:
+            with self.lock:
+                self.stamp, self.keys, self.count = None, set(), 0
+            return
+        stamp = (str(db), st.st_mtime, st.st_size)
+        if stamp == self.stamp:
+            return
+        keys, count = set(), 0
+        try:
+            for tag, payload in serato_chunks(db.read_bytes()):
+                if tag != b"otrk":
+                    continue
+                f = {t: v.decode("utf-16-be", "replace") for t, v in serato_chunks(payload) if t in (b"tsng", b"tart", b"pfil")}
+                song = f.get(b"tsng", "")
+                for k in (song, f"{f.get(b'tart', '')} {song}", Path(f.get(b"pfil", "").replace("\\", "/")).stem):
+                    k = self.norm(k)
+                    if len(k) >= self.MIN_KEY:
+                        keys.add(k)
+                count += 1
+        except Exception as e:
+            log.warning("Serato database unreadable: %s", e)
+            return
+        with self.lock:
+            self.stamp, self.keys, self.count = stamp, keys, count
+        log.info("Serato library: %d tracks", count)
+
+    def owns(self, t: dict) -> bool:
+        title = t.get("title") or ""
+        with self.lock:
+            return any(len(k) >= self.MIN_KEY and k in self.keys
+                       for k in (self.norm(title), self.norm(f"{t.get('uploader') or ''} {title}")))
+
+    def mark(self, tracks: list[dict]) -> list[dict]:
+        self.refresh()
+        for t in tracks:
+            t["in_serato"] = self.owns(t)
+        return tracks
+
+
+class Serato:
+    """Writes Serato DJ subcrates (<crate>%%<Genre>.crate) that point at downloaded files.
+    Format: 'vrsn' + UTF-16BE version, then tag/len/payload chunks; tracks are 'otrk' > 'ptrk'
+    with the path relative to the drive root, forward slashes, no leading slash.
+
+    Serato reads crates only when it starts, so while it's open new tracks wait in a pending
+    list and are written the moment it closes. <crate>%%Latest is rebuilt from the download
+    history and holds the last few days' downloads."""
+
+    VERSION = "1.0/Serato ScratchLive Crate"
+    COLUMNS = ["song", "artist", "album", "length", "bpm", "key", "added"]
+    LATEST = "Latest"
+
+    def __init__(self, settings: Settings, library: SeratoLibrary):
+        self.settings, self.library = settings, library
+        self.lock = threading.Lock()
+        self.history = None                 # callable -> [(Path, finished ts)], set by App
+        self.running = False
+        self.latest_at = 0.0
+        self.pending_path = DATA / "serato_pending.json"
+        self.pending: list[list[str]] = []  # [path, genre] waiting for Serato to close
+        if self.pending_path.exists():
+            try:
+                self.pending = json.loads(self.pending_path.read_text(encoding="utf-8"))
+            except Exception as e:
+                log.warning("Serato pending list unreadable: %s", e)
+        threading.Thread(target=self.watch, name="serato", daemon=True).start()
 
     @staticmethod
     def chunk(tag: bytes, payload: bytes) -> bytes:
@@ -587,20 +697,12 @@ class Serato:
     @staticmethod
     def parse(data: bytes) -> tuple[list[bytes], list[str]]:
         """Returns (non-track chunks as raw bytes, track paths)."""
-        other, tracks, pos = [], [], 0
-        while pos + 8 <= len(data):
-            tag, ln = data[pos:pos + 4], struct.unpack(">I", data[pos + 4:pos + 8])[0]
-            payload = data[pos + 8:pos + 8 + ln]
+        other, tracks = [], []
+        for tag, payload in serato_chunks(data):
             if tag == b"otrk":
-                p = 0
-                while p + 8 <= len(payload):
-                    t2, l2 = payload[p:p + 4], struct.unpack(">I", payload[p + 4:p + 8])[0]
-                    if t2 == b"ptrk":
-                        tracks.append(payload[p + 8:p + 8 + l2].decode("utf-16-be", "replace"))
-                    p += 8 + l2
+                tracks += [v.decode("utf-16-be", "replace") for t2, v in serato_chunks(payload) if t2 == b"ptrk"]
             else:
-                other.append(data[pos:pos + 8 + ln])
-            pos += 8 + ln
+                other.append(tag + struct.pack(">I", len(payload)) + payload)
         return other, tracks
 
     def root_and_rel(self, path: Path) -> tuple[Path, str]:
@@ -632,35 +734,111 @@ class Serato:
         sub.mkdir(exist_ok=True)
         return sub
 
-    def add(self, files: list[Path], genre: str) -> int:
-        if not self.settings.get("serato_enabled") or not files:
-            return 0
+    def by_crate_dir(self, files: list[Path]) -> dict[Path, list[str]]:
+        out: dict[Path, list[str]] = {}
+        for f in files:
+            sub = self.crate_dir(f)
+            if sub is not None:
+                out.setdefault(sub, []).append(self.root_and_rel(f)[1])
+        return out
+
+    def write_crate(self, sub: Path, name: str, rels: list[str], replace: bool = False) -> int:
         crate = self.settings.get("serato_crate") or APP_NAME
+        parent = sub / f"{crate}.crate"
+        if not parent.exists():
+            parent.write_bytes(self.header())
+        target = sub / f"{crate}%%{safe(name)}.crate"
+        other, tracks = [self.header()], []
+        if target.exists():
+            other, tracks = self.parse(target.read_bytes())
+            other = other or [self.header()]
+            if replace:
+                tracks = []
+        have = {t.lower() for t in tracks}
+        new = []
+        for r in rels:
+            if r.lower() not in have:
+                have.add(r.lower())
+                new.append(r)
+        if new or replace:
+            target.write_bytes(b"".join(other) + b"".join(self.chunk(b"otrk", self.chunk(b"ptrk", self.u16(t))) for t in tracks + new))
+        return len(new)
+
+    def write(self, files: list[Path], genre: str) -> int:
         added = 0
         with self.lock:
-            by_dir: dict[Path, list[str]] = {}
-            for f in files:
-                sub = self.crate_dir(f)
-                if sub is None:
-                    continue
-                by_dir.setdefault(sub, []).append(self.root_and_rel(f)[1])
-            for sub, rels in by_dir.items():
-                parent = sub / f"{crate}.crate"
-                if not parent.exists():
-                    parent.write_bytes(self.header())
-                target = sub / f"{crate}%%{safe(genre or 'Ungrouped')}.crate"
-                if target.exists():
-                    other, tracks = self.parse(target.read_bytes())
-                    if not other:
-                        other = [self.header()]
-                else:
-                    other, tracks = [self.header()], []
-                have = {t.lower() for t in tracks}
-                new = [r for r in rels if r.lower() not in have]
-                added += len(new)
-                data = b"".join(other) + b"".join(self.chunk(b"otrk", self.chunk(b"ptrk", self.u16(t))) for t in tracks + new)
-                target.write_bytes(data)
+            for sub, rels in self.by_crate_dir(files).items():
+                added += self.write_crate(sub, genre or "Ungrouped", rels)
         return added
+
+    def add(self, files: list[Path], genre: str) -> int:
+        """Crate the files now, or hold them until Serato closes. Returns how many went in (or wait)."""
+        if not self.settings.get("serato_enabled") or not files:
+            return 0
+        if self.running:
+            with self.lock:
+                self.pending += [[str(f), genre] for f in files]
+                self.save_pending()
+            return len(files)
+        n = self.write(files, genre)
+        self.latest()
+        return n
+
+    def save_pending(self):
+        self.pending_path.write_text(json.dumps(self.pending), encoding="utf-8")
+
+    def flush(self) -> int:
+        with self.lock:
+            todo, self.pending = self.pending, []
+            self.save_pending()
+        groups: dict[str, list[Path]] = {}
+        for path, genre in todo:
+            p = Path(path)
+            if p.exists():
+                groups.setdefault(genre, []).append(p)
+        n = sum(self.write(files, genre) for genre, files in groups.items())
+        self.latest()
+        if todo:
+            log.info("Serato closed: %d waiting track(s) written to crates", n)
+        return n
+
+    def latest(self):
+        """Rebuild <crate>%%Latest from downloads finished in the last N days (0 = off)."""
+        days = self.settings.get("serato_latest_days")
+        if not self.settings.get("serato_enabled") or not days or not self.history:
+            return
+        cutoff = time.time() - days * 86400
+        files = []
+        for p, finished in self.history():
+            if (finished or 0) < cutoff or not p.exists():
+                continue
+            files += sorted(x for x in p.iterdir() if x.suffix.lower() in AUDIO_EXT) if p.is_dir() else [p]
+        groups = self.by_crate_dir(files)
+        main = Path(self.settings.get("serato_dir") or "") / "Subcrates"
+        if main.parent.is_dir():
+            main.mkdir(exist_ok=True)
+            groups.setdefault(main, [])     # keep the main library's Latest crate even when it empties
+        with self.lock:
+            for sub, rels in groups.items():
+                self.write_crate(sub, self.LATEST, rels, replace=True)
+        self.latest_at = time.time()
+
+    def watch(self):
+        """Track whether Serato is open; flush waiting tracks when it closes, keep Latest rolling."""
+        while True:
+            try:
+                self.library.refresh()
+                if self.settings.get("serato_enabled"):
+                    now = serato_running()
+                    if not now and (self.pending or time.time() - self.latest_at > 3600):
+                        self.running = False
+                        self.flush()
+                    self.running = now
+                else:
+                    self.running = False
+            except Exception:
+                log.exception("Serato watcher")
+            time.sleep(5)
 
 
 # ------------------------------------------------------------------------------ downloads
@@ -741,6 +919,10 @@ class Downloads:
     def done_files(self) -> list[tuple[Path, str]]:
         with self.lock:
             return [(Path(r["path"]), r["genre"]) for r in self.records if r["status"] == "done" and r.get("path")]
+
+    def done_with_times(self) -> list[tuple[Path, float]]:
+        with self.lock:
+            return [(Path(r["path"]), r.get("finished") or 0) for r in self.records if r["status"] == "done" and r.get("path")]
 
     # --- workers
     def dispatcher(self):
@@ -965,10 +1147,10 @@ class Downloads:
 class Collector:
     """Runs a genre's searches on every enabled site and queues everything that matches."""
 
-    def __init__(self, settings: Settings, sites: Sites, downloads: Downloads):
-        self.settings, self.sites, self.downloads = settings, sites, downloads
+    def __init__(self, settings: Settings, sites: Sites, downloads: Downloads, library: SeratoLibrary):
+        self.settings, self.sites, self.downloads, self.library = settings, sites, downloads, library
         self.lock = threading.Lock()
-        self.state = {"running": False, "genre": None, "step": "", "found": 0, "queued": 0, "log": []}
+        self.state = {"running": False, "genre": None, "step": "", "found": 0, "queued": 0, "owned": 0, "log": []}
 
     def status(self):
         with self.lock:
@@ -1026,7 +1208,7 @@ class Collector:
         with self.lock:
             if self.state["running"]:
                 return False
-            self.state.update(running=True, genre=None, step="starting", found=0, queued=0, log=[])
+            self.state.update(running=True, genre=None, step="starting", found=0, queued=0, owned=0, log=[])
         threading.Thread(target=self._run, args=(genre_names,), daemon=True).start()
         return True
 
@@ -1039,22 +1221,30 @@ class Collector:
             days, count = self.settings.get("days"), self.settings.get("search_count")
             platforms = self.settings.get("platforms")
             keywords = self.settings.get("keywords") if self.settings.get("match_keywords") else []
+            skip_owned = self.settings.get("serato_skip_owned")
+            if skip_owned:
+                self.library.refresh()
             for g in genres:
                 with self.lock:
                     self.state["genre"] = g["name"]
-                matches, seen = [], set()
+                matches, seen, owned = [], set(), 0
                 for term in g["searches"] or DEFAULT_SEARCHES:
                     self.note(f"{g['name']}: searching \"{term}\"")
                     for t in self.search(term, days, count, platforms, g["tags"], " ".join(g["tags"][:1])):
                         if t["key"] in seen or not self.ok(t, keywords):
                             continue
                         seen.add(t["key"])
+                        if skip_owned and self.library.owns(t):
+                            owned += 1
+                            continue
                         matches.append(t)
                 queued = self.downloads.add(matches, g["name"])
                 with self.lock:
-                    self.state["found"] += len(matches)
+                    self.state["found"] += len(matches) + owned
                     self.state["queued"] += queued
-                self.note(f"{g['name']}: {len(matches)} matches, {queued} new queued")
+                    self.state["owned"] += owned
+                self.note(f"{g['name']}: {len(matches) + owned} matches, {queued} new queued"
+                          + (f", {owned} already in Serato" if owned else ""))
             self.note("finished")
         except Exception as e:
             log.exception("collect failed")
@@ -1071,9 +1261,11 @@ class App:
         self.settings = Settings()
         self.cookies = CookieFile(DATA / "cookies.txt")
         self.sites = Sites(self.cookies)
-        self.serato = Serato(self.settings)
+        self.library = SeratoLibrary(self.settings)
+        self.serato = Serato(self.settings, self.library)
         self.downloads = Downloads(self.settings, self.sites, self.serato)
-        self.collector = Collector(self.settings, self.sites, self.downloads)
+        self.serato.history = self.downloads.done_with_times
+        self.collector = Collector(self.settings, self.sites, self.downloads, self.library)
         self.last_ping = time.time()
         self.quit = threading.Event()
 
@@ -1135,7 +1327,9 @@ class App:
                 "ffmpeg": bool(self.downloads.ffmpeg), "downloads": self.downloads.snapshot(),
                 "collect": self.collector.status(), "log_file": str(LOG_FILE), "platforms": PLATFORMS,
                 "layouts": LAYOUTS, "os": platform.system(),
-                "serato_found": bool(serato_dir and Path(serato_dir).is_dir())}
+                "serato_found": bool(serato_dir and Path(serato_dir).is_dir()),
+                "serato_running": self.serato.running, "serato_pending": len(self.serato.pending),
+                "serato_tracks": self.library.count}
 
     # --- search box
     def search(self, q: str, genre: str | None, days: int | None, only_keywords: bool, platforms: dict | None):
@@ -1148,7 +1342,7 @@ class App:
             site = platform_of(q)
             tracks = {"soundcloud": self.sites.sc_resolve, "bandcamp": self.sites.bc_resolve,
                       "hearthis": self.sites.ht_resolve}[site](q)
-            return {"results": tracks, "from_url": True}
+            return {"results": self.library.mark(tracks), "from_url": True}
         g = self.settings.genre(genre) if genre else None
         results = self.collector.search(q or (g["tags"][0] if g and g["tags"] else genre), days,
                                         self.settings.get("search_count"), platforms,
@@ -1156,7 +1350,7 @@ class App:
         keywords = self.settings.get("keywords") if only_keywords else []
         results = [t for t in results if self.collector.ok(t, keywords)]
         results.sort(key=lambda t: t["ts"], reverse=True)
-        return {"results": results, "from_url": False}
+        return {"results": self.library.mark(results), "from_url": False}
 
     # --- OS bits
     def open_path(self, rec_id: str | None):
@@ -1304,12 +1498,12 @@ def make_handler(app: App):
                 user = s.get("sc_user")
                 if not user:
                     raise ValueError("Sign in to SoundCloud first (Settings > Accounts)")
-                return {"results": app.sites.sc_likes(user["id"], int(body.get("limit") or 1000))}
+                return {"results": app.library.mark(app.sites.sc_likes(user["id"], int(body.get("limit") or 1000)))}
             if route == "/api/purchases":
                 user = s.get("bc_user")
                 if not user:
                     raise ValueError("Sign in to Bandcamp first (Settings > Accounts)")
-                return {"results": app.sites.bc_purchases(user["id"])}
+                return {"results": app.library.mark(app.sites.bc_purchases(user["id"]))}
             if route == "/api/login":
                 site = body.get("site") or "soundcloud"
                 fn = app.login_soundcloud if site == "soundcloud" else app.login_bandcamp
@@ -1340,7 +1534,7 @@ def make_handler(app: App):
                 app.open_folder(Path(path).parent)
                 return {"path": path}
             if route == "/api/serato_rebuild":
-                return {"added": app.rebuild_serato()}
+                return {"added": app.rebuild_serato(), "waiting": app.serato.running}
             if route == "/api/remove":
                 d.remove(body.get("id"))
                 return {"ok": True}

@@ -35,7 +35,11 @@ SETTINGS (the gear in the sidebar)
               MP3 320, Bandcamp quality (lossless or MP3 320), how many downloads run at once.
   Serato DJ   Auto-detects your _Serato_ library. Every download is added to a crate
               "Cratez > <Genre>" (subcrates), so they show up in Serato without dragging files in.
-              Serato reads crates when it starts: close Serato while Cratez downloads, reopen after.
+              Serato reads crates when it starts, so while Serato is open Cratez holds new tracks
+              back (a note in Downloads shows how many) and writes them the moment you close it.
+              Already owned: Cratez reads Serato's library, marks results you already have
+              "in Serato", and Collect skips them.
+              Latest crate: "Cratez > Latest" always holds the last 7 days of downloads (3/14/30/off).
               Files on an external drive get their crates in that drive's own _Serato_ folder.
               "Add all finished downloads to crates now" rebuilds the crates from your history.
   Searching   Title keywords, default time window, results per search, and skip-if-shorter /
