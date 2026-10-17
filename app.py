@@ -77,7 +77,7 @@ BC_PREF = {"lossless": ["flac", "wav", "aiff-lossless", "mp3-320", "mp3-v0", "aa
 SC_WINDOWS = [(1, "last_day"), (7, "last_week"), (31, "last_month"), (366, "last_year")]
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 PLATFORMS = {"soundcloud": "SoundCloud", "bandcamp": "Bandcamp", "hearthis": "hearthis.at"}
-LAYOUTS = {"genre/uploader": "Genre / Uploader", "genre": "Genre", "uploader": "Uploader", "flat": "Everything in one folder"}
+LAYOUTS = {"flat": "Just the files - no subfolders", "genre": "Genre", "uploader": "Uploader", "genre/uploader": "Genre / Uploader"}
 AUDIO_EXT = {".mp3", ".m4a", ".aac", ".flac", ".wav", ".aif", ".aiff", ".ogg", ".opus", ".alac"}
 EMBEDDABLE = {"mp3", "flac", "m4a", "mp4", "ogg", "opus"}
 
@@ -165,7 +165,7 @@ class Settings:
             "genres": [{"name": n, "tags": t, "searches": list(DEFAULT_SEARCHES)} for n, t in DEFAULT_GENRES],
             "sc_user": None, "bc_user": None,
             "tags": True, "cover_art": True, "convert_streams": False, "bc_quality": "lossless",
-            "layout": "genre/uploader", "append_id": True, "parallel": 1,
+            "layout": "flat", "append_id": True, "parallel": 1,
             "min_seconds": 45, "max_seconds": 0,
             "serato_enabled": serato is not None, "serato_dir": str(serato) if serato else "", "serato_crate": APP_NAME,
             "serato_skip_owned": True, "serato_latest_days": 7,
@@ -194,7 +194,7 @@ class Settings:
                            "serato_skip_owned"):
                     v = bool(v)
                 elif k == "layout" and v not in LAYOUTS:
-                    v = "genre/uploader"
+                    v = "flat"
                 elif k == "bc_quality" and v not in BC_PREF:
                     v = "lossless"
                 elif k == "serato_crate":
@@ -951,13 +951,17 @@ class Downloads:
             self.records = [r for r in self.records if r["status"] == "downloading"]
         self.save()
 
+    def done_paths(self, r: dict) -> list[Path]:
+        """A finished download's files: the album's tracks when there's a list, else its path."""
+        return [Path(f) for f in r.get("files") or ([r["path"]] if r.get("path") else [])]
+
     def done_files(self) -> list[tuple[Path, str]]:
         with self.lock:
-            return [(Path(r["path"]), r["genre"]) for r in self.records if r["status"] == "done" and r.get("path")]
+            return [(p, r["genre"]) for r in self.records if r["status"] == "done" for p in self.done_paths(r)]
 
     def done_with_times(self) -> list[tuple[Path, float]]:
         with self.lock:
-            return [(Path(r["path"]), r.get("finished") or 0) for r in self.records if r["status"] == "done" and r.get("path")]
+            return [(p, r.get("finished") or 0) for r in self.records if r["status"] == "done" for p in self.done_paths(r)]
 
     # --- workers
     def dispatcher(self):
@@ -1027,7 +1031,8 @@ class Downloads:
         return "bestaudio/best"   # hearthis stream (the original file is fetched directly)
 
     def finish(self, rec: dict, path: str | None, quality: str, files: list[Path] | None = None):
-        self.set(rec, status="done", pct=100, path=path, quality=quality, finished=time.time(), error=None)
+        self.set(rec, status="done", pct=100, path=path, quality=quality, finished=time.time(), error=None,
+                 files=[str(f) for f in files] if files else None)
         try:
             n = self.serato.add(files or ([Path(path)] if path else []), rec["genre"])
             if n:
@@ -1156,20 +1161,21 @@ class Downloads:
         tmp = folder / f".cratez-{uuid.uuid4().hex}.download"
         name = self.fetch(rec, url, tmp) or f"{t['uploader']} - {t['title']}"
         if zipfile.is_zipfile(tmp):
-            dest = folder / safe(f"{t['uploader']} - {t['title']}")
+            flat = self.settings.get("layout") == "flat"
+            dest = folder if flat else folder / safe(f"{t['uploader']} - {t['title']}")
             dest.mkdir(exist_ok=True)
             files = []
             with zipfile.ZipFile(tmp) as z:
                 for member in z.infolist():
-                    if member.is_dir():
-                        continue
+                    if member.is_dir() or (flat and Path(member.filename).suffix.lower() not in AUDIO_EXT):
+                        continue                        # flat: just the songs, no cover.jpg
                     outp = dest / safe(Path(member.filename).name)
                     with z.open(member) as src, open(outp, "wb") as dst:
                         shutil.copyfileobj(src, dst)
                     if outp.suffix.lower() in AUDIO_EXT:
                         files.append(outp)
             tmp.unlink(missing_ok=True)
-            self.finish(rec, str(dest), f"{fmt} · {len(files)} tracks", files)
+            self.finish(rec, str(files[0] if flat and len(files) == 1 else dest), f"{fmt} · {len(files)} tracks", files)
         else:
             ext = Path(name).suffix or {"flac": ".flac", "wav": ".wav", "aiff-lossless": ".aiff"}.get(fmt, ".mp3")
             target = folder / (safe(Path(name).stem) + ext)
@@ -1302,6 +1308,7 @@ class App:
         self.serato.history = self.downloads.done_with_times
         self.collector = Collector(self.settings, self.sites, self.downloads, self.library)
         self.last_ping = time.time()
+        self.bye_at = 0.0               # the window said it's closing (a reload pings again right away)
         self.quit = threading.Event()
 
     # --- accounts
@@ -1418,7 +1425,10 @@ class App:
         if path and Path(path).exists():
             p = Path(path)
             if IS_WIN:
-                subprocess.Popen(["explorer", "/select,", str(p)] if p.is_file() else ["explorer", str(p)])
+                if p.is_file():   # one string: explorer wants /select,"path" with no space after the comma
+                    subprocess.Popen(f'explorer /select,"{p}"')
+                else:
+                    os.startfile(str(p))  # type: ignore[attr-defined]
             elif IS_MAC:
                 subprocess.Popen(["open", "-R", str(p)] if p.is_file() else ["open", str(p)])
             else:
@@ -1524,6 +1534,11 @@ def make_handler(app: App):
             self.end_headers()
 
         def do_POST(self):
+            if self.path.split("?")[0] == "/api/bye":   # sendBeacon from our page closing (can't set headers)
+                host = self.headers.get("Host", "")
+                if self.headers.get("Origin") in (f"http://{host}", None):
+                    app.bye_at = time.time()
+                return self.send_json({"ok": True})
             if self.headers.get("X-Cratez") != "1":   # only our own page may drive the API
                 return self.send_json({"error": "forbidden"}, 403)
             length = int(self.headers.get("Content-Length") or 0)
@@ -1648,12 +1663,28 @@ def main() -> int:
     ap.add_argument("--no-window", action="store_true", help="don't open a window; print the URL")
     args = ap.parse_args()
 
+    instance = DATA / "instance.json"
+    if not args.no_window and not args.port:   # already running: just open another window onto it
+        try:
+            old = json.loads(instance.read_text(encoding="utf-8"))["port"]
+            import urllib.request
+            urllib.request.urlopen(f"http://127.0.0.1:{old}/api/ping", timeout=2).read()
+            log.info("already running on port %s - opening a window", old)
+            open_window(f"http://127.0.0.1:{old}/")
+            return 0
+        except Exception:
+            pass
+
     app = App()
     server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(app))
     server.daemon_threads = True
     port = server.server_address[1]
     url = f"http://127.0.0.1:{port}/"
     threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        instance.write_text(json.dumps({"port": port, "pid": os.getpid()}), encoding="utf-8")
+    except OSError:
+        pass
     log.info("%s %s listening on %s (data in %s)", APP_NAME, VERSION, url, DATA)
     if args.no_window:
         print(f"{APP_NAME} running at {url}  (Ctrl+C to stop)", flush=True)
@@ -1664,13 +1695,21 @@ def main() -> int:
     try:
         while not app.quit.is_set():
             time.sleep(2)
-            idle = time.time() - app.last_ping
-            if not args.no_window and idle > 30 and time.time() - started > 90 and not app.downloads.active():
-                log.info("no window for %.0fs and nothing downloading - exiting", idle)
+            # Exit when the window closed: it says goodbye on close, and a long silence covers crashes.
+            # (Minimised windows throttle their timers to about one ping a minute, so no short timeout.)
+            now, idle = time.time(), time.time() - app.last_ping
+            closed = app.bye_at and app.last_ping < app.bye_at and now - app.bye_at > 8
+            if not args.no_window and (closed or idle > 900) and now - started > 90 and not app.downloads.active():
+                log.info("window closed (idle %.0fs) and nothing downloading - exiting", idle)
                 break
     except KeyboardInterrupt:
         pass
     server.shutdown()
+    try:
+        if json.loads(instance.read_text(encoding="utf-8")).get("port") == port:
+            instance.unlink()
+    except (OSError, ValueError):
+        pass
     return 0
 
 

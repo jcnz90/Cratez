@@ -127,6 +127,9 @@
   .badge.none { background: rgba(255,255,255,.06); color: var(--muted); }
   .badge.check { background: rgba(255,210,122,.12); color: var(--amber); }
   .badges { display: flex; gap: 6px; }
+  .offline { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 50; padding: 12px 18px; border-radius: 12px; background: var(--pink); color: #fff; font-size: 13px; box-shadow: 0 8px 30px rgba(0,0,0,.4); }
+  .quit-screen { height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--muted); font-size: 14px; }
+  .quit-screen b { color: var(--text); font-size: 20px; }
   .badge.owned { background: rgba(53,224,161,.12); color: var(--green); }
   .serato-note { margin: 0 18px 10px; padding: 9px 12px; border-radius: 10px; background: rgba(245,165,36,.10); color: var(--label); font-size: 12px; line-height: 1.5; }
   .serato-note b { color: var(--accent); }
@@ -286,7 +289,7 @@
     <div id="v-settings" class="view hidden" style="display:contents">
       <div class="top"><h2 style="margin:0;font-size:20px;flex:1">Settings</h2>
         <button class="btn indigo" onclick="saveSettings()"><svg><use href="#i-check"/></svg>Save settings</button>
-        <button class="btn ghost" onclick="api('/api/quit')">Quit Cratez</button></div>
+        <button class="btn ghost" onclick="quitApp()">Quit Cratez</button></div>
       <div class="content" style="padding-top:6px">
 
         <div class="section">
@@ -361,17 +364,31 @@
   </section>
 </div>
 <div class="toast" id="toast"></div>
+<div class="offline hidden" id="offline"><b>Cratez isn't running.</b> Open it again from the Start menu / Applications, then close this window.</div>
 
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let state = null, results = [], likes = [], selected = null, lastView = 'search', curView = 'search', searching = false, settingsDirty = false;
 
+// every action is a POST (the server only answers GET for state); a failed fetch means Cratez isn't running
 async function api(path, body) {
-  const r = await fetch(path, body === undefined ? {} : {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Cratez': '1'}, body: JSON.stringify(body)});
+  let r;
+  try {
+    r = await fetch(path, path === '/api/state' ? {} : {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Cratez': '1'}, body: JSON.stringify(body ?? {})});
+  } catch (e) { offline(true); throw new Error('Cratez isn\'t running - open it again from the Start menu / Applications'); }
+  offline(false);
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || r.statusText);
   return j;
+}
+function offline(on) { $('#offline').classList.toggle('hidden', !on); }
+window.addEventListener('unhandledrejection', e => { e.preventDefault(); toast(e.reason?.message || String(e.reason), 5000); });
+window.addEventListener('pagehide', () => navigator.sendBeacon('/api/bye'));
+async function quitApp() {
+  try { await api('/api/quit'); } catch (e) {}
+  document.body.innerHTML = '<div class="quit-screen"><b>Cratez has quit.</b><span>You can close this window.</span></div>';
+  setTimeout(() => window.close(), 300);
 }
 function toast(msg, ms = 2600) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), ms); }
 function view(name) {
@@ -548,7 +565,7 @@ function renderGenres() {
     <label>Genre folder</label><input class="txt g-name" value="${esc(g.name)}">
     <label>SoundCloud tags (comma separated - also the words put in front of Bandcamp / hearthis searches)</label><input class="txt g-tags" value="${esc(g.tags.join(', '))}">
     <label>Search terms</label><input class="txt g-searches" value="${esc(g.searches.join(', '))}">
-    <div class="acts"><button class="btn pink sm" onclick="collect('${esc(g.name)}')"><svg><use href="#i-bolt"/></svg>Collect</button><span class="sp"></span><button class="btn ghost sm" onclick="saveGenres()">Save</button><button class="btn ghost sm" onclick="deleteGenre(${i})"><svg><use href="#i-trash"/></svg></button></div>
+    <div class="acts"><button class="btn pink sm" onclick="collect(${i})"><svg><use href="#i-bolt"/></svg>Collect</button><span class="sp"></span><button class="btn ghost sm" onclick="saveGenres()">Save</button><button class="btn ghost sm" onclick="deleteGenre(${i})"><svg><use href="#i-trash"/></svg></button></div>
   </div>`).join('');
   renderCollect();
 }
@@ -558,8 +575,9 @@ function readGenres() {
 async function saveGenres() { await api('/api/settings', {genres: readGenres()}); toast('Genres saved'); await refresh(); renderGenres(); }
 async function addGenre() { const gs = readGenres(); gs.push({name: 'New genre', tags: [], searches: ['edit', 'remix', 'bootleg', 'blend', 'flip']}); await api('/api/settings', {genres: gs}); await refresh(); renderGenres(); }
 async function deleteGenre(i) { const gs = readGenres(); gs.splice(i, 1); await api('/api/settings', {genres: gs}); await refresh(); renderGenres(); }
-async function collect(name) {
-  await api('/api/settings', {genres: readGenres()});
+async function collect(i) {
+  const gs = readGenres(), name = i == null ? null : gs[i].name;
+  await api('/api/settings', {genres: gs});
   const r = await api('/api/collect', {genres: name ? [name] : null});
   toast(r.started ? `Collecting ${name || 'all genres'}…` : 'Already collecting - wait for it to finish'); refresh();
 }
@@ -600,7 +618,7 @@ function renderSettings() {
   document.querySelectorAll('#v-settings input, #v-settings select').forEach(el => el.oninput = () => { settingsDirty = true; if (el.id === 'layout') layoutExample(); if (el.id === 'serato-crate') $('#serato-eg').textContent = $('#serato-eg2').textContent = el.value || 'Cratez'; });
 }
 function layoutExample() {
-  const eg = {'genre/uploader': 'House / DJ Name / Title.wav', 'genre': 'House / Title.wav', 'uploader': 'DJ Name / Title.wav', 'flat': 'Title.wav'}[$('#layout').value];
+  const eg = {'genre/uploader': 'House / DJ Name / Title.wav', 'genre': 'House / Title.wav', 'uploader': 'DJ Name / Title.wav', 'flat': 'Title.wav (albums too: just the songs)'}[$('#layout').value];
   $('#layout-eg').textContent = 'e.g. ' + eg;
 }
 async function saveSettings() {

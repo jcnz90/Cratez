@@ -29,7 +29,8 @@ SETTINGS (the gear in the sidebar)
   Accounts    SoundCloud: paste your oauth_token cookie (F12 > Application > Cookies > soundcloud.com).
               Bandcamp: paste your identity cookie (same place, bandcamp.com).
               Or import a cookies.txt exported while signed in. Tokens stay on your computer.
-  Library     Download folder (Browse...), folder layout (Genre/Uploader, Genre, Uploader or flat),
+  Library     Download folder (Browse...), folder layout (just the files - the default - or Genre,
+              Uploader, Genre/Uploader subfolders),
               whether to append the track id to file names.
   Audio&tags  Stream fallback on/off, metadata tags on/off, cover art on/off, convert streams to
               MP3 320, Bandcamp quality (lossless or MP3 320), how many downloads run at once.
