@@ -49,7 +49,7 @@ except ImportError:  # pragma: no cover
     sys.exit("yt-dlp is required:  pip install -U yt-dlp")
 
 APP_NAME = "Cratez"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 FROZEN = getattr(sys, "frozen", False)
 BASE = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 UI_DIR = BASE / "ui"
