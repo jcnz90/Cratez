@@ -39,6 +39,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "..\..\dist\Cratez.exe"; DestDir: "{app}"; Flags: ignoreversion
+; ffmpeg + ffprobe (fetched by installer\get_ffmpeg.py) next to Cratez.exe: tags, cover art, best streams
+Source: "..\..\vendor\ffmpeg\*.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "..\..\README.txt"; DestDir: "{app}"; Flags: ignoreversion isreadme
 
 [Icons]

@@ -21,9 +21,8 @@ WINDOWS                                      MAC
      SmartScreen on first run: More info > Run anyway     First open: right-click > Open (unsigned app)
   Or skip building: double-click run.bat         Or skip building: double-click run.command
 
-  Recommended on both:  ffmpeg
-    Windows:  winget install Gyan.FFmpeg        Mac:  brew install ffmpeg
-  It gives you title/artist/genre tags, embedded cover art and the MP3-320 conversion option.
+  ffmpeg comes built in (the build fetches it): title/artist/genre tags, embedded cover art and the
+  MP3-320 conversion option. ffmpeg is free software under the GPL - source at https://ffmpeg.org.
 
 SETTINGS (the gear in the sidebar)
   Accounts    SoundCloud: paste your oauth_token cookie (F12 > Application > Cookies > soundcloud.com).
