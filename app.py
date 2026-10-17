@@ -39,11 +39,12 @@ import webbrowser
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, unquote, urlencode
 
 try:
     import yt_dlp
     from yt_dlp.networking import Request
+    from yt_dlp.extractor.soundcloud import SoundcloudBaseIE
     from yt_dlp.utils import ExtractorError, parse_iso8601, sanitize_filename
 except ImportError:  # pragma: no cover
     sys.exit("yt-dlp is required:  pip install -U yt-dlp")
@@ -256,6 +257,13 @@ class CookieFile:
         kept = [l for l in self.lines() if l.split("\t")[0] not in domains]
         self.write(kept + new)
 
+    def value(self, domain: str, name: str) -> str | None:
+        for l in self.lines():
+            f = l.split("\t")
+            if domain in f[0] and f[5:6] == [name] and len(f) > 6:
+                return f[6]
+        return None
+
     def has(self, domain: str, name: str) -> bool:
         return any(domain in l.split("\t")[0] and l.split("\t")[5:6] == [name] for l in self.lines())
 
@@ -330,8 +338,7 @@ class Sites:
 
     def reset(self):
         with self.lock:
-            if self._sc is not None:   # yt-dlp keeps the OAuth header on the extractor class
-                self._sc._HEADERS.pop("Authorization", None)
+            SoundcloudBaseIE._HEADERS.pop("Authorization", None)   # yt-dlp keeps it on the class
             self._ydl = None
             self._sc = None
 
@@ -353,6 +360,11 @@ class Sites:
             if self._sc is None:
                 ie = ydl.get_info_extractor("SoundcloudSearch")
                 ie.initialize()
+                # yt-dlp checks the token against an auth endpoint that rejects good tokens; send it
+                # anyway and let /me decide (App.verify)
+                token = self.cookies.value("soundcloud.com", "oauth_token")
+                if token and "Authorization" not in ie._HEADERS:
+                    ie._HEADERS["Authorization"] = f"OAuth {token}"
                 self._sc = ie
             return self._sc
 
@@ -607,21 +619,44 @@ class SeratoLibrary:
         s = OWNED_NOISE.sub(" ", (s or "").lower())
         return " ".join(re.sub(r"[\W_]+", " ", s).split())
 
+    def databases(self) -> list[Path]:
+        """The main library plus <drive>/_Serato_/database V2 on every other drive: Serato keeps
+        tracks that live on D:, USB sticks etc. in that drive's own database."""
+        roots = []
+        if IS_WIN:
+            try:
+                import ctypes
+                mask = ctypes.windll.kernel32.GetLogicalDrives()
+                roots = [Path(f"{chr(65 + i)}:\\") for i in range(26) if mask >> i & 1 and i > 1]
+            except Exception:
+                pass
+        elif IS_MAC:
+            try:
+                roots = [p for p in Path("/Volumes").iterdir() if p.is_dir()]
+            except OSError:
+                pass
+        dbs = [Path(self.settings.get("serato_dir") or "") / "database V2"]
+        for r in roots:
+            cand = r / "_Serato_" / "database V2"
+            try:
+                if cand.is_file() and all(cand.resolve() != d.resolve() for d in dbs if d.is_file()):
+                    dbs.append(cand)
+            except OSError:
+                continue
+        return [d for d in dbs if d.is_file()]
+
     def refresh(self):
-        """Re-read the database when it changed (a stat otherwise)."""
-        db = Path(self.settings.get("serato_dir") or "") / "database V2"
+        """Re-read the databases when one changed (a stat otherwise)."""
         try:
-            st = db.stat()
+            dbs = [(d, d.stat()) for d in self.databases()]
         except OSError:
-            with self.lock:
-                self.stamp, self.keys, self.count = None, set(), 0
-            return
-        stamp = (str(db), st.st_mtime, st.st_size)
+            dbs = []
+        stamp = tuple((str(d), st.st_mtime, st.st_size) for d, st in dbs)
         if stamp == self.stamp:
             return
         keys, count = set(), 0
         try:
-            for tag, payload in serato_chunks(db.read_bytes()):
+            for tag, payload in (c for d, _ in dbs for c in serato_chunks(d.read_bytes())):
                 if tag != b"otrk":
                     continue
                 f = {t: v.decode("utf-16-be", "replace") for t, v in serato_chunks(payload) if t in (b"tsng", b"tart", b"pfil")}
@@ -636,7 +671,7 @@ class SeratoLibrary:
             return
         with self.lock:
             self.stamp, self.keys, self.count = stamp, keys, count
-        log.info("Serato library: %d tracks", count)
+        log.info("Serato library: %d tracks in %s", count, ", ".join(str(d) for d, _ in dbs) or "no database")
 
     def owns(self, t: dict) -> bool:
         title = t.get("title") or ""
@@ -1270,9 +1305,24 @@ class App:
         self.quit = threading.Event()
 
     # --- accounts
+    @staticmethod
+    def clean_sc_token(raw: str) -> str:
+        """The oauth_token however it was pasted: bare, quoted, URL-encoded, 'oauth_token=...',
+        'OAuth ...', or a whole cookie / header line."""
+        s = unquote(raw or "").strip()
+        m = re.search(r"\b\d-\d+-\d+-[A-Za-z0-9]+", s)
+        if m:
+            return m.group(0)
+        s = re.sub(r"(?i)^(cookie:\s*)?.*?oauth_token\s*[=:]\s*", "", s)
+        s = re.sub(r"(?i)^(authorization:\s*)?(oauth|bearer)\s+", "", s)
+        runs = re.findall(r"[\w.~+/-]{10,}", s)
+        return max(runs, key=len) if runs else ""
+
     def login_soundcloud(self, token: str) -> dict:
-        if not re.match(r"^[\w-]{10,}$", token.strip().strip('"')):
-            raise ValueError("That doesn't look like a SoundCloud oauth_token value")
+        token = self.clean_sc_token(token)
+        if not token:
+            raise ValueError("Paste the Value of the oauth_token cookie (F12 > Application > Cookies > "
+                             "https://soundcloud.com), while signed in to SoundCloud")
         self.cookies.set(".soundcloud.com", "oauth_token", token)
         return self.verify("soundcloud")
 
@@ -1301,11 +1351,18 @@ class App:
 
     def verify(self, site: str) -> dict:
         self.sites.reset()
-        user = None
+        user, err = None, None
         try:
             user = self.sites.sc_me() if site == "soundcloud" else self.sites.bc_me()
         except Exception as e:
             log.warning("%s login check failed: %s", site, e)
+            err = str(e)
+        if not user and err and not re.search(r"HTTP Error 40[13]", err):
+            self.cookies.drop(".soundcloud.com" if site == "soundcloud" else ".bandcamp.com")
+            self.sites.reset()
+            why = re.sub(r"^ERROR:\s*", "", err)[:120]
+            raise ValueError(f"Couldn't reach {PLATFORMS[site]} to check the token - check your internet "
+                             f"connection and try again ({why})")
         if not user:
             self.cookies.drop(".soundcloud.com" if site == "soundcloud" else ".bandcamp.com")
             self.sites.reset()

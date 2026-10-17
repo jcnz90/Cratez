@@ -622,10 +622,15 @@ async function browseFolder() {
   catch (e) { toast(e.message, 4000); }
 }
 async function login(site, inputId) {
-  const token = $('#' + inputId).value.trim(); if (!token) return toast('Paste the cookie value first');
-  try { const r = await api('/api/login', {site, token}); toast(`Signed in to ${state.platforms[site]} as ${r.user.username}`); $('#' + inputId).value = ''; await refresh(); renderAccounts(); }
-  catch (e) { toast(e.message, 6000); }
+  const input = $('#' + inputId), btn = input.parentNode.querySelector('button'), status = $(site === 'soundcloud' ? '#sc-status' : '#bc-status');
+  const token = input.value.trim(); if (!token) { status.innerHTML = '<span class="warn">Paste the cookie value first</span>'; return; }
+  btn.disabled = true; btn.textContent = 'Checking…'; status.innerHTML = '<span class="spin"></span> checking with ' + esc(state.platforms[site]) + '…';
+  try { const r = await api('/api/login', {site, token}); toast(`Signed in to ${state.platforms[site]} as ${r.user.username}`); input.value = ''; await refresh(); renderAccounts(); }
+  catch (e) { status.innerHTML = `<span class="err">${esc(e.message)}</span>`; toast(e.message, 6000); }
+  btn.disabled = false; btn.textContent = 'Sign in';
 }
+for (const [id, site] of [['sc-token', 'soundcloud'], ['bc-token', 'bandcamp']])
+  $('#' + id).addEventListener('keydown', e => { if (e.key === 'Enter') login(site, id); });
 async function logout(site) { await api('/api/logout', {site}); toast('Signed out'); await refresh(); renderAccounts(); }
 function importCookies(input) {
   const f = input.files[0]; if (!f) return;
