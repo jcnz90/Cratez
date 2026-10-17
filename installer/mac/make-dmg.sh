@@ -51,7 +51,12 @@ end tell
 EOF
 
 sync
-hdiutil detach -quiet "/Volumes/$VOL"
+# Finder/Spotlight can keep the volume busy for a moment after styling it (hdiutil exit 16)
+for i in 1 2 3 4 5; do
+    hdiutil detach -quiet "/Volumes/$VOL" && break
+    sleep 3
+    [ "$i" = 5 ] && hdiutil detach -force "/Volumes/$VOL"
+done
 hdiutil convert -quiet dist/cratez-rw.dmg -format UDZO -imagekey zlib-level=9 -o "$DMG"
 rm -f dist/cratez-rw.dmg
 echo "Disk image: $(pwd)/$DMG"
