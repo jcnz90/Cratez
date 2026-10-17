@@ -2,11 +2,22 @@ CRATEZ - edits, blends, bootlegs, remixes & packs from SoundCloud, Bandcamp and 
 ===========================================================================================
 Downloads into genre folders and straight into Serato DJ crates.
 
+INSTALL
+  Windows   run Cratez-Setup-<version>.exe and follow the steps. It installs for you only (no admin
+            needed), adds Cratez to the Start menu and can add a desktop shortcut. Uninstall from
+            Settings > Apps. SmartScreen on first run: More info > Run anyway (the app is unsigned).
+  Mac       open Cratez-<version>.dmg and drag Cratez into Applications.
+            First open: right-click > Open (the app is unsigned).
+  Get both from the project's GitHub Releases page, or build them yourself below.
+
+BUILD IT YOURSELF
 WINDOWS                                      MAC
   1. Unzip somewhere, e.g. C:\Users\you\Cratez   1. Unzip somewhere, e.g. ~/Cratez
   2. Double-click build.bat                      2. Double-click build.command
      (needs Python 3.10+ from python.org)           (needs python3: python.org or "brew install python")
   3. Your app is  dist\Cratez.exe                3. Your app is  dist/Cratez.app  (drag to Applications)
+     and the installer  dist\Cratez-Setup-*.exe     and the installer  dist/Cratez-*.dmg
+     (needs Inno Setup: winget install JRSoftware.InnoSetup)
      SmartScreen on first run: More info > Run anyway     First open: right-click > Open (unsigned app)
   Or skip building: double-click run.bat         Or skip building: double-click run.command
 
@@ -51,7 +62,15 @@ WHAT GETS DOWNLOADED
                in (albums arrive as a folder). Paid tracks you don't own are listed with a buy link -
                the preview stream is never ripped, that's the artist's shop.
 
+BRANDING
+  icon.png / icon.ico / icon.icns   app icon (dark tile, Iso crate with the amber lid)
+  branding/                          logo lockups (light, dark), 1200x630 thumbnail, 512px icon
+  installer/                         Windows setup wizard art and the Mac disk-image background
+
 NOTES
+  * Publishing: copy installer/github/release.yml to .github/workflows/, then push a tag like
+    v1.1.0 to GitHub. It builds the
+    Windows installer and the Mac disk image and attaches them to a release with the thumbnail.
   * The sites change often. If searches or downloads start failing, run build.bat / build.command
     again - it pulls the newest yt-dlp.
   * Log file: Windows %APPDATA%\Cratez\cratez.log  -  Mac ~/Library/Application Support/Cratez/cratez.log

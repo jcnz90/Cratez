@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 echo ============================================
-echo  Cratez - building dist\Cratez.exe
+echo  Cratez - building dist\Cratez.exe and its installer
 echo ============================================
 echo.
 
@@ -21,9 +21,23 @@ python -m pip install --upgrade -r requirements.txt || goto :err
 echo Building...
 python -m PyInstaller --noconfirm --clean --onefile --windowed --name Cratez --icon icon.ico --add-data "ui;ui" app.py || goto :err
 
+for /f "tokens=3" %%v in ('findstr /b /c:"VERSION = " app.py') do set "VER=%%~v"
+set "ISCC="
+for /f "delims=" %%i in ('where iscc 2^>nul') do set "ISCC=%%i"
+if not defined ISCC if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
+if not defined ISCC if exist "%LocalAppData%\Programs\Inno Setup 6\ISCC.exe" set "ISCC=%LocalAppData%\Programs\Inno Setup 6\ISCC.exe"
+if defined ISCC (
+    echo Building the installer...
+    "%ISCC%" /Q /DAppVersion=%VER% installer\windows\cratez.iss || goto :err
+    set "SETUP=%~dp0dist\Cratez-Setup-%VER%.exe"
+) else (
+    echo Inno Setup not found, so no installer this time - install it with:  winget install JRSoftware.InnoSetup
+)
+
 echo.
 echo ============================================
 echo  Done:  %~dp0dist\Cratez.exe
+if defined SETUP echo  Installer:  %SETUP%
 echo ============================================
 echo.
 echo  Optional: install ffmpeg for tagged files and the best stream quality:
