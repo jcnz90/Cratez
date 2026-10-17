@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 220" font-family="Outfit, Segoe UI, Helvetica, Arial, sans-serif">
+  <rect width="960" height="220" rx="18" fill="#121417"/>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#F5A524"/></marker>
+  </defs>
+  <g>
+    <rect x="40" y="50" width="240" height="120" rx="14" fill="#1C2027" stroke="#2A2F37"/>
+    <circle cx="80" cy="90" r="18" fill="#F5A524"/><text x="80" y="96" text-anchor="middle" font-size="17" font-weight="800" fill="#121417">1</text>
+    <text x="110" y="96" font-size="20" font-weight="700" fill="#F6F6F4">Find</text>
+    <text x="60" y="130" font-size="13.5" fill="#C9CCD2">Search SoundCloud, Bandcamp</text>
+    <text x="60" y="150" font-size="13.5" fill="#C9CCD2">and hearthis.at by genre</text>
+  </g>
+  <line x1="290" y1="110" x2="350" y2="110" stroke="#F5A524" stroke-width="2.5" marker-end="url(#a)"/>
+  <g>
+    <rect x="360" y="50" width="240" height="120" rx="14" fill="#1C2027" stroke="#2A2F37"/>
+    <circle cx="400" cy="90" r="18" fill="#F5A524"/><text x="400" y="96" text-anchor="middle" font-size="17" font-weight="800" fill="#121417">2</text>
+    <text x="430" y="96" font-size="20" font-weight="700" fill="#F6F6F4">Download</text>
+    <text x="380" y="130" font-size="13.5" fill="#C9CCD2">Originals when offered, tagged,</text>
+    <text x="380" y="150" font-size="13.5" fill="#C9CCD2">with cover art, in genre folders</text>
+  </g>
+  <line x1="610" y1="110" x2="670" y2="110" stroke="#F5A524" stroke-width="2.5" marker-end="url(#a)"/>
+  <g>
+    <rect x="680" y="50" width="240" height="120" rx="14" fill="#1C2027" stroke="#F5A524"/>
+    <circle cx="720" cy="90" r="18" fill="#F5A524"/><text x="720" y="96" text-anchor="middle" font-size="17" font-weight="800" fill="#121417">3</text>
+    <text x="750" y="96" font-size="20" font-weight="700" fill="#F6F6F4">Play in Serato</text>
+    <text x="700" y="130" font-size="13.5" fill="#C9CCD2">Lands in Cratez › Genre and</text>
+    <text x="700" y="150" font-size="13.5" fill="#C9CCD2">Cratez › Latest crates</text>
+  </g>
+</svg>
