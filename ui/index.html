@@ -369,13 +369,14 @@
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const link = u => esc(/^https?:\/\//i.test(u || '') ? u : '#');   // links and pictures from the sites: web addresses only
 let state = null, results = [], likes = [], selected = null, lastView = 'search', curView = 'search', searching = false, settingsDirty = false;
 
 // every action is a POST (the server only answers GET for state); a failed fetch means Cratez isn't running
 async function api(path, body) {
   let r;
   try {
-    r = await fetch(path, path === '/api/state' ? {} : {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Cratez': '1'}, body: JSON.stringify(body ?? {})});
+    r = await fetch(path, path.startsWith('/api/state') ? {} : {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Cratez': '1'}, body: JSON.stringify(body ?? {})});
   } catch (e) { offline(true); throw new Error('Cratez isn\'t running - open it again from the Start menu / Applications'); }
   offline(false);
   const j = await r.json().catch(() => ({}));
@@ -403,7 +404,10 @@ document.querySelectorAll('.nav a').forEach(a => a.onclick = () => view(a.datase
 
 // ---------------- state polling
 async function refresh() {
-  try { state = await api('/api/state'); } catch (e) { return; }
+  let s;
+  try { s = await api('/api/state' + (state ? '?since=' + state.downloads_rev : '')); } catch (e) { return; }
+  if (s.downloads == null) s.downloads = state ? state.downloads : [];   // unchanged since last time: keep ours
+  state = s;
   renderDownloads(); renderUser(); renderSeratoNote();
   if (curView === 'genres') renderCollect();
   if (curView === 'settings' && !settingsDirty) renderAccounts();
@@ -412,7 +416,7 @@ setInterval(refresh, 1500);
 setInterval(() => fetch('/api/ping').catch(() => {}), 3000);
 
 function thumb(t, cls = '') {
-  if (t.artwork) return `<div class="thumb ${cls}"><img src="${esc(t.artwork)}" loading="lazy" onerror="this.parentNode.textContent='${esc((t.title || '?')[0].toUpperCase())}'"></div>`;
+  if (t.artwork) return `<div class="thumb ${cls}"><img src="${link(t.artwork)}" loading="lazy" onerror="this.parentNode.textContent='${esc((t.title || '?')[0].toUpperCase())}'"></div>`;
   return `<div class="thumb ${cls}">${esc((t.title || '?')[0].toUpperCase())}</div>`;
 }
 function fmtDur(s) { return s ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` : ''; }
@@ -422,7 +426,7 @@ const STATUS = { queued: 'Queued', downloading: 'Downloading', done: 'Saved', fa
 let lastDl = '';
 function renderDownloads(force) {
   const list = state.downloads;
-  const sig = JSON.stringify(list) + selected + curView;
+  const sig = state.downloads_rev + ' ' + selected + ' ' + curView;
   if (!force && sig === lastDl) return;   // nothing changed: don't redraw (keeps thumbnails from reloading)
   lastDl = sig;
   $('#dl-count').textContent = list.length;
@@ -435,7 +439,7 @@ function renderDownloads(force) {
     if (st === 'done' && r.quality) txt += ` · ${r.quality}`;
     const act = st === 'done' ? `<button class="ibtn" title="Show in folder" onclick="event.stopPropagation();api('/api/open',{id:'${r.id}'})"><svg><use href="#i-folder"/></svg></button>`
       : (st === 'failed' ? `<button class="ibtn indigo" title="Retry" onclick="event.stopPropagation();api('/api/retry',{id:'${r.id}'}).then(refresh)"><svg><use href="#i-retry"/></svg></button>`
-      : (st === 'unavailable' || st === 'paid') ? `<a class="ibtn" title="Open page" href="${esc(t.url)}" target="_blank" onclick="event.stopPropagation()"><svg><use href="#i-ext"/></svg></a>` : '');
+      : (st === 'unavailable' || st === 'paid') ? `<a class="ibtn" title="Open page" href="${link(t.url)}" target="_blank" onclick="event.stopPropagation()"><svg><use href="#i-ext"/></svg></a>` : '');
     return `<div class="dl ${selected === r.id ? 'sel' : ''}" onclick="showDetail('${r.id}')">
       ${thumb(t)}
       <div class="t"><b title="${esc(t.title)}">${esc(t.title)}</b><div class="sub">${esc(t.uploader)}${r.genre ? ' · ' + esc(r.genre) : ''}</div>
@@ -461,7 +465,7 @@ function renderDetail() {
       ${['failed', 'unavailable', 'paid'].includes(r.status) ? `<button class="sqbtn ghost" title="Retry" onclick="api('/api/retry',{id:'${r.id}'}).then(refresh)"><svg><use href="#i-retry"/></svg></button>` : ''}
       <button class="sqbtn pink" title="Remove from list (keeps the file)" onclick="api('/api/remove',{id:'${r.id}'}).then(()=>{view(lastView);refresh()})"><svg><use href="#i-trash"/></svg></button></h1>
     <div class="card">
-      <div class="f"><label>Link</label><div class="v"><a href="${esc(t.url)}" target="_blank">${esc(t.url)}</a></div></div>
+      <div class="f"><label>Link</label><div class="v"><a href="${link(t.url)}" target="_blank">${esc(t.url)}</a></div></div>
       <div class="f"><label>Uploader</label><div class="v">${esc(t.uploader)}<span class="hint"> · <span class="plat ${t.platform}"></span>${esc(state.platforms[t.platform])}${t.purchase ? ' purchase' : ''}${t.tag ? ' · ' + esc(t.tag) : ''}</span></div></div>
       <div class="f"><label>Genre folder</label><div class="v">${esc(r.genre || 'Ungrouped')}</div></div>
       <div class="f"><label>Status</label><div class="v st-${r.status}"><span class="status" style="font-size:14px;margin:0"><i class="dot"></i>${esc(STATUS[r.status])}${r.status === 'downloading' ? ' ' + (r.pct || 0) + '%' : ''}${r.quality ? ' · ' + esc(r.quality) : ''}</span>${r.error ? `<div class="hint err" style="margin-top:6px">${esc(r.error)}</div>` : ''}</div></div>
@@ -475,7 +479,7 @@ function renderUser() {
   const u = state.user, b = state.bc_user, me = $('#me');
   if (u || b) {
     const who = u ? u.username : b.username;
-    me.innerHTML = `${u && u.avatar ? `<img src="${esc(u.avatar)}" alt="">` : '<div class="ph"></div>'}<div class="t"><b>${esc(who)}</b><span>${u && b ? 'SoundCloud + Bandcamp' : u ? 'SoundCloud' : 'Bandcamp'} · signed in</span></div>`;
+    me.innerHTML = `${u && u.avatar ? `<img src="${link(u.avatar)}" alt="">` : '<div class="ph"></div>'}<div class="t"><b>${esc(who)}</b><span>${u && b ? 'SoundCloud + Bandcamp' : u ? 'SoundCloud' : 'Bandcamp'} · signed in</span></div>`;
     $('#avatar').classList.toggle('hidden', !(u && u.avatar)); if (u && u.avatar) $('#avatar').src = u.avatar;
   } else {
     me.innerHTML = '<div class="ph"></div><div class="t"><b>Not signed in</b><span>Accounts in Settings</span></div>';
@@ -511,7 +515,7 @@ function rows(list, target) {
   const queued = new Set((state?.downloads || []).map(r => r.track.key));
   target.innerHTML = list.map((t, i) => `<div class="row">
     ${thumb(t)}
-    <div class="t"><b title="${esc(t.title)}">${esc(t.title)}</b><div class="sub"><span class="plat ${t.platform}"></span>${esc(t.uploader)}${t.created ? ' · ' + esc(t.created) : ''}${t.duration ? ' · ' + fmtDur(t.duration) : ''}${t.tag ? ' · ' + esc(t.tag) : ''} · <a href="${esc(t.url)}" target="_blank">open ↗</a></div></div>
+    <div class="t"><b title="${esc(t.title)}">${esc(t.title)}</b><div class="sub"><span class="plat ${t.platform}"></span>${esc(t.uploader)}${t.created ? ' · ' + esc(t.created) : ''}${t.duration ? ' · ' + fmtDur(t.duration) : ''}${t.tag ? ' · ' + esc(t.tag) : ''} · <a href="${link(t.url)}" target="_blank">open ↗</a></div></div>
     ${badge(t)}
     <button class="dlbtn ${queued.has(t.key) ? 'done' : ''}" data-i="${i}" onclick="downloadOne(this, '${target.id}')" title="${queued.has(t.key) ? 'Already in Downloads' : 'Download'}"><svg><use href="#${queued.has(t.key) ? 'i-check' : 'i-down'}"/></svg></button>
   </div>`).join('') || '<div class="empty">No matches. Try another word, a wider time window, or switch off the keyword filter.</div>';

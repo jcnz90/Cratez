@@ -24,6 +24,7 @@ import csv
 import html
 import json
 import logging
+import logging.handlers
 import os
 import platform
 import random
@@ -50,7 +51,7 @@ except ImportError:  # pragma: no cover
     sys.exit("yt-dlp is required:  pip install -U yt-dlp")
 
 APP_NAME = "Cratez"
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 FROZEN = getattr(sys, "frozen", False)
 BASE = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 UI_DIR = BASE / "ui"
@@ -97,7 +98,8 @@ def data_dir() -> Path:
 
 DATA = data_dir()
 LOG_FILE = DATA / "cratez.log"
-logging.basicConfig(filename=str(LOG_FILE), level=logging.INFO,
+_log_handler = logging.handlers.RotatingFileHandler(str(LOG_FILE), maxBytes=2_000_000, backupCount=3, encoding="utf-8")
+logging.basicConfig(level=logging.INFO, handlers=[_log_handler],
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("cratez")
 
@@ -120,11 +122,29 @@ class YDLLogger:
 
 
 def safe(name: str | None) -> str:
-    return sanitize_filename((name or "").strip(), restricted=False).replace("%%", "-") or "Unknown"
+    s = sanitize_filename((name or "").strip(), restricted=False).replace("%%", "-")
+    return s if s.strip(". ") else "Unknown"      # never "", "." or ".." (those would climb out of the folder)
+
+
+def write_atomic(path: Path, text: str):
+    """Write via a temp file and swap it in, so a crash or power cut never leaves half a file."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    try:
+        os.replace(tmp, path)
+    except OSError:                 # Windows: something (antivirus, a backup tool) has it open
+        path.write_text(text, encoding="utf-8")
+        tmp.unlink(missing_ok=True)
 
 
 def window_for(days: int) -> str | None:
     return next((w for d, w in SC_WINDOWS if 0 < days <= d), None)
+
+
+def serato_lib(settings) -> Path | None:
+    """The configured _Serato_ folder, or None when it's blank (Path("") would mean the working folder)."""
+    d = str(settings.get("serato_dir") or "").strip()
+    return Path(d).expanduser() if d else None
 
 
 def default_serato_dir() -> Path | None:
@@ -200,14 +220,14 @@ class Settings:
                 elif k == "serato_crate":
                     v = safe(str(v)) if str(v).strip() else APP_NAME
                 self.data[k] = v
-            self.path.write_text(json.dumps(self.data, indent=2), encoding="utf-8")
+            write_atomic(self.path, json.dumps(self.data, indent=2))
 
     def reset(self):
         with self.lock:
             keep = {k: self.data.get(k) for k in ("sc_user", "bc_user")}
             self.data = self.defaults()
             self.data.update(keep)
-            self.path.write_text(json.dumps(self.data, indent=2), encoding="utf-8")
+            write_atomic(self.path, json.dumps(self.data, indent=2))
 
     def public(self) -> dict:
         with self.lock:
@@ -219,6 +239,22 @@ class Settings:
 
 # ------------------------------------------------------------------------------ cookies
 
+COOKIE_SITES = ("soundcloud.com", "bandcamp.com", "hearthis.at")
+
+
+def cookie_domain(line: str) -> str:
+    """A cookies.txt line's domain, without the leading dot or the #HttpOnly_ marker."""
+    d = line.split("\t")[0]
+    if d.startswith("#HttpOnly_"):
+        d = d[len("#HttpOnly_"):]
+    return d.lstrip(".").lower()
+
+
+def domain_match(line: str, domain: str) -> bool:
+    d, want = cookie_domain(line), domain.lstrip(".").lower()
+    return d == want or d.endswith("." + want)
+
+
 class CookieFile:
     """One Netscape cookies.txt holding the SoundCloud oauth_token and the Bandcamp identity cookie."""
 
@@ -229,11 +265,13 @@ class CookieFile:
         if not self.path.exists():
             return []
         return [l for l in self.path.read_text(encoding="utf-8", errors="replace").splitlines()
-                if l.strip() and not l.startswith("#")]
+                if l.strip() and (not l.startswith("#") or l.startswith("#HttpOnly_"))]
 
     def write(self, lines: list[str]):
         if lines:
-            self.path.write_text("# Netscape HTTP Cookie File\n" + "\n".join(lines) + "\n", encoding="utf-8")
+            write_atomic(self.path, "# Netscape HTTP Cookie File\n" + "\n".join(lines) + "\n")
+            if not IS_WIN:
+                os.chmod(self.path, 0o600)      # sign-in tokens: readable by you only
         else:
             self.path.unlink(missing_ok=True)
 
@@ -242,30 +280,36 @@ class CookieFile:
         if re.search(r"\s", value):             # pasted decoded: put it back into cookie form
             value = quote(value, safe="")
         expiry = int(time.time()) + 10 * 365 * 86400
-        kept = [l for l in self.lines() if not (domain in l.split("\t")[0] and l.split("\t")[5:6] == [name])]
+        kept = [l for l in self.lines() if not (domain_match(l, domain) and l.split("\t")[5:6] == [name])]
         kept.append(f"{domain}\tTRUE\t/\tTRUE\t{expiry}\t{name}\t{value}")
         self.write(kept)
 
     def drop(self, domain: str):
-        self.write([l for l in self.lines() if domain not in l.split("\t")[0]])
+        self.write([l for l in self.lines() if not domain_match(l, domain)])
 
     def merge(self, text: str):
-        new = [l for l in text.splitlines() if l.strip() and not l.startswith("#") and len(l.split("\t")) >= 7]
+        """Take the sites Cratez uses from a browser's cookies.txt export; everything else in it
+        (your other logins) is left out rather than stored here."""
+        new = [l for l in text.splitlines() if l.strip() and (not l.startswith("#") or l.startswith("#HttpOnly_"))
+               and len(l.split("\t")) >= 7]
         if not new:
             raise ValueError("That doesn't look like a Netscape cookies.txt")
-        domains = {l.split("\t")[0] for l in new}
-        kept = [l for l in self.lines() if l.split("\t")[0] not in domains]
+        new = [l for l in new if any(domain_match(l, d) for d in COOKIE_SITES)]
+        if not new:
+            raise ValueError("No SoundCloud or Bandcamp cookies in that file - export it while signed in")
+        domains = {cookie_domain(l) for l in new}
+        kept = [l for l in self.lines() if cookie_domain(l) not in domains]
         self.write(kept + new)
 
     def value(self, domain: str, name: str) -> str | None:
         for l in self.lines():
             f = l.split("\t")
-            if domain in f[0] and f[5:6] == [name] and len(f) > 6:
+            if domain_match(l, domain) and f[5:6] == [name] and len(f) > 6:
                 return f[6]
         return None
 
     def has(self, domain: str, name: str) -> bool:
-        return any(domain in l.split("\t")[0] and l.split("\t")[5:6] == [name] for l in self.lines())
+        return self.value(domain, name) is not None
 
     def exists(self) -> bool:
         return self.path.exists()
@@ -626,8 +670,11 @@ class SeratoLibrary:
         if IS_WIN:
             try:
                 import ctypes
-                mask = ctypes.windll.kernel32.GetLogicalDrives()
-                roots = [Path(f"{chr(65 + i)}:\\") for i in range(26) if mask >> i & 1 and i > 1]
+                k32 = ctypes.windll.kernel32
+                mask = k32.GetLogicalDrives()
+                # local disks and USB sticks only: a dropped network drive can hang every scan for seconds
+                roots = [Path(f"{chr(65 + i)}:\\") for i in range(26) if mask >> i & 1 and i > 1
+                         and k32.GetDriveTypeW(f"{chr(65 + i)}:\\") in (2, 3)]   # DRIVE_REMOVABLE, DRIVE_FIXED
             except Exception:
                 pass
         elif IS_MAC:
@@ -635,7 +682,8 @@ class SeratoLibrary:
                 roots = [p for p in Path("/Volumes").iterdir() if p.is_dir()]
             except OSError:
                 pass
-        dbs = [Path(self.settings.get("serato_dir") or "") / "database V2"]
+        lib = serato_lib(self.settings)
+        dbs = [lib / "database V2"] if lib else []
         for r in roots:
             cand = r / "_Serato_" / "database V2"
             try:
@@ -758,8 +806,8 @@ class Serato:
         root, _ = self.root_and_rel(path)
         home_root = self.root_and_rel(Path.home())[0]
         if root == home_root:
-            lib = Path(self.settings.get("serato_dir") or "")
-            if not lib.is_dir():
+            lib = serato_lib(self.settings)
+            if not lib or not lib.is_dir():
                 return None
         else:
             lib = root / "_Serato_"
@@ -820,7 +868,7 @@ class Serato:
         return n
 
     def save_pending(self):
-        self.pending_path.write_text(json.dumps(self.pending), encoding="utf-8")
+        write_atomic(self.pending_path, json.dumps(self.pending))
 
     def flush(self) -> int:
         with self.lock:
@@ -849,8 +897,9 @@ class Serato:
                 continue
             files += sorted(x for x in p.iterdir() if x.suffix.lower() in AUDIO_EXT) if p.is_dir() else [p]
         groups = self.by_crate_dir(files)
-        main = Path(self.settings.get("serato_dir") or "") / "Subcrates"
-        if main.parent.is_dir():
+        lib = serato_lib(self.settings)
+        if lib and lib.is_dir():
+            main = lib / "Subcrates"
             main.mkdir(exist_ok=True)
             groups.setdefault(main, [])     # keep the main library's Latest crate even when it empties
         with self.lock:
@@ -885,6 +934,7 @@ class Downloads:
         self.lock = threading.Lock()
         self.records: list[dict] = []
         self.running: set[str] = set()
+        self.rev = 1                        # bumped on every change, so the window only re-fetches the list then
         self.wake = threading.Event()
         self.ffmpeg = shutil.which("ffmpeg")
         if self.path.exists():
@@ -899,11 +949,15 @@ class Downloads:
 
     def save(self):
         with self.lock:
-            self.path.write_text(json.dumps(self.records), encoding="utf-8")
+            self.rev += 1
+            write_atomic(self.path, json.dumps(self.records))
 
-    def snapshot(self) -> list[dict]:
+    def snapshot(self, since: int | None = None) -> tuple[int, list[dict] | None]:
+        """(revision, records) - records is None when nothing changed since that revision."""
         with self.lock:
-            return json.loads(json.dumps(self.records))
+            if since == self.rev:
+                return self.rev, None
+            return self.rev, json.loads(json.dumps(self.records))
 
     def active(self) -> bool:
         with self.lock:
@@ -972,6 +1026,7 @@ class Downloads:
                 for r in todo:
                     r["status"] = "downloading"
                     self.running.add(r["id"])
+                    self.rev += 1
             for r in todo:
                 threading.Thread(target=self.run_one, args=(r,), daemon=True).start()
             self.wake.wait(timeout=2)
@@ -993,6 +1048,7 @@ class Downloads:
     def set(self, rec, **kw):
         with self.lock:
             rec.update(kw)
+            self.rev += 1
 
     def fail(self, rec, err: Exception):
         msg = str(err)
@@ -1059,6 +1115,11 @@ class Downloads:
             elif d.get("status") == "finished":
                 self.set(rec, pct=100)
 
+        if t["platform"] == "soundcloud":
+            try:
+                self.sites.sc()     # puts the sign-in header in place; yt-dlp's own check would drop it
+            except Exception as e:
+                log.warning("SoundCloud sign-in not applied: %s", e)
         name = "%(title).150B" + (" [%(id)s]" if self.settings.get("append_id") else "") + ".%(ext)s"
         base = {
             **self.sites.ydl_opts(), "format": self.format_for(t), "outtmpl": str(folder / name),
@@ -1095,19 +1156,25 @@ class Downloads:
 
     def fetch(self, rec: dict, url: str, target: Path):
         tmp = target.with_name(target.name + ".part")
-        with self.sites.open(url) as r:
-            total = int(r.headers.get("Content-Length") or 0)
-            got = 0
-            with open(tmp, "wb") as fh:
-                while True:
-                    chunk = r.read(256 * 1024)
-                    if not chunk:
-                        break
-                    fh.write(chunk)
-                    got += len(chunk)
-                    if total:
-                        self.set(rec, pct=round(100 * got / total, 1))
-            disp = r.headers.get("Content-Disposition") or ""
+        try:
+            with self.sites.open(url) as r:
+                total = int(r.headers.get("Content-Length") or 0)
+                got = 0
+                with open(tmp, "wb") as fh:
+                    while True:
+                        chunk = r.read(256 * 1024)
+                        if not chunk:
+                            break
+                        fh.write(chunk)
+                        got += len(chunk)
+                        if total:
+                            self.set(rec, pct=round(100 * got / total, 1))
+                disp = r.headers.get("Content-Disposition") or ""
+            if total and got < total:
+                raise ValueError(f"download cut off ({got // 1024} of {total // 1024} KB) - press retry")
+        except BaseException:
+            tmp.unlink(missing_ok=True)     # no half files left in the download folder
+            raise
         m = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)', disp)
         tmp.replace(target)
         return html.unescape(m.group(1)) if m else None
@@ -1149,6 +1216,8 @@ class Downloads:
         t = rec["track"]
         name = re.sub(r"\s*\(hearthis\.at\)", "", t.get("download_filename") or f"{t['title']}.mp3")
         stem, ext = os.path.splitext(safe(name))
+        if ext.lower() not in AUDIO_EXT:
+            stem, ext = safe(name), ".mp3"
         target = folder / f"{stem}{' [' + str(t['id']) + ']' if self.settings.get('append_id') else ''}{ext or '.mp3'}"
         self.fetch(rec, t["download_url"], target)
         self.tag_file(target, rec)
@@ -1159,6 +1228,13 @@ class Downloads:
         t = rec["track"]
         fmt, url = self.sites.bc_download_link(t["download_page"], self.settings.get("bc_quality"))
         tmp = folder / f".cratez-{uuid.uuid4().hex}.download"
+        try:
+            self._purchase(rec, folder, fmt, url, tmp)
+        finally:
+            tmp.unlink(missing_ok=True)
+
+    def _purchase(self, rec: dict, folder: Path, fmt: str, url: str, tmp: Path):
+        t = rec["track"]
         name = self.fetch(rec, url, tmp) or f"{t['uploader']} - {t['title']}"
         if zipfile.is_zipfile(tmp):
             flat = self.settings.get("layout") == "flat"
@@ -1174,11 +1250,15 @@ class Downloads:
                         shutil.copyfileobj(src, dst)
                     if outp.suffix.lower() in AUDIO_EXT:
                         files.append(outp)
-            tmp.unlink(missing_ok=True)
+            if not files:
+                raise ValueError("Bandcamp sent a zip with no songs in it - try another format in Settings")
             self.finish(rec, str(files[0] if flat and len(files) == 1 else dest), f"{fmt} · {len(files)} tracks", files)
         else:
-            ext = Path(name).suffix or {"flac": ".flac", "wav": ".wav", "aiff-lossless": ".aiff"}.get(fmt, ".mp3")
-            target = folder / (safe(Path(name).stem) + ext)
+            stem, ext = Path(name).stem, Path(name).suffix.lower()
+            if ext not in AUDIO_EXT:        # only ever save an audio file, whatever the server calls it
+                stem, ext = Path(name).name, {"flac": ".flac", "wav": ".wav", "aiff-lossless": ".aiff", "aac-hi": ".m4a",
+                                              "vorbis": ".ogg", "alac": ".m4a"}.get(fmt, ".mp3")
+            target = folder / (safe(stem) + ext)
             tmp.replace(target)
             self.finish(rec, str(target), fmt)
 
@@ -1384,11 +1464,12 @@ class App:
         self.settings.update({"sc_user" if site == "soundcloud" else "bc_user": None})
 
     # --- state
-    def state(self) -> dict:
+    def state(self, since: int | None = None) -> dict:
         s = self.settings.public()
         serato_dir = s.get("serato_dir") or ""
+        rev, downloads = self.downloads.snapshot(since)
         return {"version": VERSION, "settings": s, "user": s.get("sc_user"), "bc_user": s.get("bc_user"),
-                "ffmpeg": bool(self.downloads.ffmpeg), "downloads": self.downloads.snapshot(),
+                "ffmpeg": bool(self.downloads.ffmpeg), "downloads": downloads, "downloads_rev": rev,
                 "collect": self.collector.status(), "log_file": str(LOG_FILE), "platforms": PLATFORMS,
                 "layouts": LAYOUTS, "os": platform.system(),
                 "serato_found": bool(serato_dir and Path(serato_dir).is_dir()),
@@ -1454,10 +1535,13 @@ class App:
     def pick_folder(start: str) -> str | None:
         try:
             if IS_WIN:
-                ps = ("Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.Form -Property @{TopMost=$true};"
+                ps = ("[Console]::OutputEncoding = [Text.Encoding]::UTF8; Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.Form -Property @{TopMost=$true};"
                       "$d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = 'Choose the Cratez download folder';"
-                      f"$d.SelectedPath = '{start}'; if ($d.ShowDialog($f) -eq 'OK') {{ Write-Output $d.SelectedPath }}")
-                out = subprocess.run(["powershell", "-NoProfile", "-STA", "-Command", ps], capture_output=True, text=True, timeout=600)
+                      "$d.SelectedPath = $env:CRATEZ_START; if ($d.ShowDialog($f) -eq 'OK') { Write-Output $d.SelectedPath }")
+                # the start folder goes in through the environment, so a ' in a folder name can't break the script
+                out = subprocess.run(["powershell", "-NoProfile", "-STA", "-Command", ps], capture_output=True, text=True,
+                                     timeout=600, env={**os.environ, "CRATEZ_START": str(start or "")},
+                                     creationflags=NO_WINDOW, encoding="utf-8", errors="replace")
                 return out.stdout.strip() or None
             if IS_MAC:
                 out = subprocess.run(["osascript", "-e", 'POSIX path of (choose folder with prompt "Choose the Cratez download folder")'],
@@ -1477,7 +1561,7 @@ class App:
         with path.open("w", newline="", encoding="utf-8") as fh:
             w = csv.writer(fh)
             w.writerow(["genre", "title", "uploader", "platform", "status", "reason", "link"])
-            for r in self.downloads.snapshot():
+            for r in self.downloads.snapshot()[1]:
                 if r["status"] in ("unavailable", "paid", "failed"):
                     t = r["track"]
                     w.writerow([r["genre"], t["title"], t["uploader"], PLATFORMS.get(t["platform"], t["platform"]),
@@ -1514,14 +1598,24 @@ def make_handler(app: App):
             self.end_headers()
             self.wfile.write(body)
 
+        def host_ok(self) -> bool:
+            """Only answer requests addressed to this machine: a web page whose name has been pointed at
+            127.0.0.1 (DNS rebinding) would otherwise be able to read and drive the API."""
+            host = (self.headers.get("Host") or "").lower()
+            port = self.server.server_address[1]
+            return host in (f"127.0.0.1:{port}", f"localhost:{port}")
+
         def do_GET(self):
-            path = self.path.split("?")[0]
+            if not self.host_ok():
+                return self.send_json({"error": "forbidden"}, 403)
+            path, _, query = self.path.partition("?")
             if path == "/api/ping":
                 app.last_ping = time.time()
                 return self.send_json({"ok": True})
             if path == "/api/state":
                 app.last_ping = time.time()
-                return self.send_json(app.state())
+                m = re.search(r"(?:^|&)since=(\d+)", query)
+                return self.send_json(app.state(int(m.group(1)) if m else None))
             if path in ("/", "/index.html"):
                 page = (UI_DIR / "index.html").read_bytes()
                 self.send_response(200)
@@ -1534,6 +1628,8 @@ def make_handler(app: App):
             self.end_headers()
 
         def do_POST(self):
+            if not self.host_ok():
+                return self.send_json({"error": "forbidden"}, 403)
             if self.path.split("?")[0] == "/api/bye":   # sendBeacon from our page closing (can't set headers)
                 host = self.headers.get("Host", "")
                 if self.headers.get("Origin") in (f"http://{host}", None):
@@ -1699,8 +1795,9 @@ def main() -> int:
             # (Minimised windows throttle their timers to about one ping a minute, so no short timeout.)
             now, idle = time.time(), time.time() - app.last_ping
             closed = app.bye_at and app.last_ping < app.bye_at and now - app.bye_at > 8
-            if not args.no_window and (closed or idle > 900) and now - started > 90 and not app.downloads.active():
-                log.info("window closed (idle %.0fs) and nothing downloading - exiting", idle)
+            busy = app.downloads.active() or app.collector.status()["running"]
+            if not args.no_window and (closed or idle > 900) and now - started > 90 and not busy:
+                log.info("window closed (idle %.0fs) and nothing downloading or collecting - exiting", idle)
                 break
     except KeyboardInterrupt:
         pass
