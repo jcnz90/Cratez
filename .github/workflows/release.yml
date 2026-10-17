@@ -23,6 +23,8 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m PyInstaller --noconfirm --clean --onefile --windowed --name Cratez --icon icon.ico --add-data "ui;ui" app.py
+      - name: Fetch ffmpeg
+        run: python installer/get_ffmpeg.py
       - name: Build the installer
         shell: pwsh
         run: |

@@ -18,6 +18,9 @@ python -m pip install --upgrade pip >nul 2>nul
 echo Installing yt-dlp and PyInstaller...
 python -m pip install --upgrade -r requirements.txt || goto :err
 
+echo Fetching ffmpeg to ship inside Cratez...
+python installer\get_ffmpeg.py || echo ffmpeg download failed - building without it (tags and cover art need it)
+
 echo Building...
 python -m PyInstaller --noconfirm --clean --onefile --windowed --name Cratez --icon icon.ico --add-data "ui;ui" app.py || goto :err
 
@@ -40,8 +43,6 @@ echo  Done:  %~dp0dist\Cratez.exe
 if defined SETUP echo  Installer:  %SETUP%
 echo ============================================
 echo.
-echo  Optional: install ffmpeg for tagged files and the best stream quality:
-echo      winget install Gyan.FFmpeg
 echo  If Windows SmartScreen warns on first run: "More info" then "Run anyway".
 echo.
 pause

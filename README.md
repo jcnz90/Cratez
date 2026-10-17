@@ -52,15 +52,7 @@
 3. Open the downloaded file and drag the **Cratez** icon onto the **Applications** folder.
 4. The first time only: open Applications, **right-click** Cratez and choose **Open**, then click **Open** again. After that it opens normally.
 
-### Optional: better tags and cover art
-
-Cratez works on its own, but installing the free **ffmpeg** tool adds artist/genre tags, embedded cover art and MP3-320 conversion.
-
-| Windows | Mac |
-|---|---|
-| Open **Terminal** (or PowerShell) and paste:<br>`winget install Gyan.FFmpeg` | Open **Terminal** and paste:<br>`brew install ffmpeg`<br><sub>(needs [Homebrew](https://brew.sh))</sub> |
-
-Restart Cratez afterwards.
+Tags, embedded cover art and MP3-320 conversion work out of the box: the installers include [ffmpeg](https://ffmpeg.org) (free software under the GPL; source at ffmpeg.org).
 
 ---
 

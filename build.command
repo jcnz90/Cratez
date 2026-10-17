@@ -14,9 +14,16 @@ source .venv/bin/activate
 python -m pip install --upgrade pip >/dev/null
 echo "Installing yt-dlp and PyInstaller..."
 python -m pip install --upgrade -r requirements.txt
+echo "Fetching ffmpeg to ship inside Cratez..."
+FFMPEG_ARGS=()
+if python installer/get_ffmpeg.py; then
+  FFMPEG_ARGS=(--add-binary "vendor/ffmpeg/ffmpeg:." --add-binary "vendor/ffmpeg/ffprobe:.")
+else
+  echo "ffmpeg download failed - building without it (tags and cover art need it)"
+fi
 echo "Building..."
 VER="$(sed -n 's/^VERSION = "\(.*\)"/\1/p' app.py)"
-python -m PyInstaller --noconfirm --clean --windowed --name Cratez --icon icon.icns --add-data "ui:ui" \
+python -m PyInstaller --noconfirm --clean --windowed --name Cratez --icon icon.icns --add-data "ui:ui" "${FFMPEG_ARGS[@]}" \
   --osx-bundle-identifier app.cratez.Cratez app.py
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VER" dist/Cratez.app/Contents/Info.plist 2>/dev/null || true
 # the app is unsigned: clear the quarantine flag so Gatekeeper lets it open with a right-click > Open
@@ -29,6 +36,5 @@ echo " Done:  $(pwd)/dist/Cratez.app"
 echo " Installer:  $(pwd)/dist/Cratez-$VER.dmg   (open it, drag Cratez into Applications)"
 echo "============================================"
 echo " First launch: right-click the app > Open (it's unsigned)."
-echo " Optional: brew install ffmpeg   - tags, cover art and MP3 conversion"
 echo
 [ -n "$CI" ] || read -n 1 -s -r -p "Press any key to close"

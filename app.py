@@ -141,6 +141,19 @@ def window_for(days: int) -> str | None:
     return next((w for d, w in SC_WINDOWS if 0 < days <= d), None)
 
 
+def find_ffmpeg() -> str | None:
+    """The ffmpeg shipped with Cratez (next to the exe on Windows, inside the app on Mac, vendor/ffmpeg
+    when run from source), else one on the PATH."""
+    exe = "ffmpeg.exe" if IS_WIN else "ffmpeg"
+    for d in (BASE, Path(sys.executable).resolve().parent, BASE / "vendor" / "ffmpeg"):
+        if (d / exe).is_file():
+            return str(d / exe)
+    return shutil.which("ffmpeg")
+
+
+FFMPEG = find_ffmpeg()
+
+
 def serato_lib(settings) -> Path | None:
     """The configured _Serato_ folder, or None when it's blank (Path("") would mean the working folder)."""
     d = str(settings.get("serato_dir") or "").strip()
@@ -388,6 +401,8 @@ class Sites:
 
     def ydl_opts(self) -> dict:
         opts = {"quiet": True, "no_warnings": True, "logger": YDLLogger()}
+        if FFMPEG:
+            opts["ffmpeg_location"] = str(Path(FFMPEG).parent)   # ffprobe sits next to it
         if self.cookies.exists():
             opts["cookiefile"] = str(self.cookies.path)
         return opts
@@ -936,7 +951,7 @@ class Downloads:
         self.running: set[str] = set()
         self.rev = 1                        # bumped on every change, so the window only re-fetches the list then
         self.wake = threading.Event()
-        self.ffmpeg = shutil.which("ffmpeg")
+        self.ffmpeg = FFMPEG
         if self.path.exists():
             try:
                 self.records = json.loads(self.path.read_text(encoding="utf-8"))
@@ -1202,7 +1217,8 @@ class Downloads:
         cmd += ["-c:a", "copy", "-id3v2_version", "3", "-metadata", f"title={t.get('title') or path.stem}",
                 "-metadata", f"artist={t.get('uploader') or ''}", "-metadata", f"genre={rec['genre'] or ''}", str(out)]
         try:
-            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)
+            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300,
+                           creationflags=NO_WINDOW)     # no console flashing up for each file
             out.replace(path)
         except Exception as e:
             log.warning("tagging failed for %s: %s", path.name, e)
