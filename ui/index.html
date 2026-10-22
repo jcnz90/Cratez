@@ -195,6 +195,36 @@
   .acct-h { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
   .acct-h .sp { flex: 1; }
   .frow .btn.sm { height: 40px; }
+
+  /* preview player: a play button on every cover, one track at a time */
+  .pwrap { position: relative; flex: none; }
+  .pwrap .play { position: absolute; inset: 0; border: 0; padding: 0; border-radius: inherit; background: rgba(18,20,23,.55); color: var(--text); display: grid; place-items: center; cursor: pointer; opacity: 0; transition: .15s; }
+  .pwrap .play svg { width: 18px; height: 18px; }
+  .pwrap .play:hover svg { color: var(--accent); }
+  .row:hover .play, .dl:hover .play, .pwrap.on .play { opacity: 1; }
+  .pwrap.on .play { background: rgba(18,20,23,.78); color: var(--accent); }
+  .pwrap.on .thumb { box-shadow: 0 0 0 2px var(--accent); }
+  .row .pwrap { border-radius: 12px; } .dl .pwrap { border-radius: 50%; }
+  .pwrap .prog { position: absolute; left: 6px; right: 6px; bottom: 5px; height: 3px; border-radius: 3px; background: rgba(255,255,255,.18); overflow: hidden; display: none; pointer-events: none; }
+  .row .pwrap.on .prog { display: block; }
+  .pwrap .prog i { display: block; height: 100%; width: 0; background: var(--accent); }
+  .pwrap.loading .play svg { display: none; }
+  .pwrap.loading .play::after { content: ""; width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.2); border-top-color: var(--accent); border-radius: 50%; animation: rot .8s linear infinite; }
+  .player { display: flex; align-items: center; gap: 12px; padding: 10px 24px; border-top: 1px solid var(--line); background: var(--panel-2); }
+  .player .pp { width: 38px; height: 38px; border-radius: 50%; border: 0; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; cursor: pointer; flex: none; transition: .15s; }
+  .player .pp:hover { background: var(--accent-2); }
+  .player .pp svg { width: 16px; height: 16px; }
+  .player .thumb { width: 38px; height: 38px; border-radius: 9px; }
+  .player .pv-t { width: 220px; min-width: 0; flex: none; }
+  .player .pv-t b { display: block; font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .player .pv-t > span { display: block; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .player .pv-time { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; width: 36px; text-align: center; flex: none; }
+  .seek { flex: 1; height: 18px; display: flex; align-items: center; cursor: pointer; min-width: 80px; }
+  .seek div { flex: 1; height: 4px; border-radius: 4px; background: rgba(255,255,255,.1); position: relative; }
+  .seek i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 4px; background: var(--accent); }
+  .seek i::after { content: ""; position: absolute; right: -5px; top: -3px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); opacity: 0; transition: .15s; }
+  .seek:hover i::after { opacity: 1; }
+  .player .ibtn:hover { background: rgba(255,255,255,.12); color: #fff; }
 </style>
 </head>
 <body>
@@ -214,6 +244,9 @@
   <symbol id="i-wave" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><path d="M4 12v2M8 8v8M12 5v14M16 9v6M20 11v2"/></symbol>
   <symbol id="i-bag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8h12l1 13H5L6 8Z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></symbol>
   <symbol id="i-bolt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5Z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></symbol>
 </svg>
 
 <div class="app">
@@ -361,6 +394,17 @@
       <div class="top"><button class="sqbtn ghost" onclick="view(lastView)"><svg><use href="#i-back"/></svg></button><h2 style="margin:0;font-size:16px;flex:1;color:var(--muted);font-weight:500">Download</h2></div>
       <div class="content detail" id="detail"></div>
     </div>
+
+    <!-- PREVIEW PLAYER -->
+    <div class="player hidden" id="player">
+      <button class="pp" id="pv-btn" title="Play / pause" onclick="pvToggle()"><svg><use href="#i-play"/></svg></button>
+      <div id="pv-art"></div>
+      <div class="pv-t"><b id="pv-title"></b><span id="pv-sub"></span></div>
+      <span class="pv-time" id="pv-cur">0:00</span>
+      <div class="seek" id="pv-seek" title="Jump to"><div><i id="pv-fill"></i></div></div>
+      <span class="pv-time" id="pv-dur">0:00</span>
+      <button class="ibtn" title="Stop preview" onclick="stopPreview()"><svg><use href="#i-x"/></svg></button>
+    </div>
   </section>
 </div>
 <div class="toast" id="toast"></div>
@@ -441,12 +485,13 @@ function renderDownloads(force) {
       : (st === 'failed' ? `<button class="ibtn indigo" title="Retry" onclick="event.stopPropagation();api('/api/retry',{id:'${r.id}'}).then(refresh)"><svg><use href="#i-retry"/></svg></button>`
       : (st === 'unavailable' || st === 'paid') ? `<a class="ibtn" title="Open page" href="${link(t.url)}" target="_blank" onclick="event.stopPropagation()"><svg><use href="#i-ext"/></svg></a>` : '');
     return `<div class="dl ${selected === r.id ? 'sel' : ''}" onclick="showDetail('${r.id}')">
-      ${thumb(t)}
+      ${playThumb(t, 'rec:' + r.id, `event.stopPropagation();previewRec('${r.id}')`)}
       <div class="t"><b title="${esc(t.title)}">${esc(t.title)}</b><div class="sub">${esc(t.uploader)}${r.genre ? ' · ' + esc(r.genre) : ''}</div>
         <div class="status st-${st}"><i class="dot"></i>${esc(txt)}</div>${st === 'downloading' ? `<div class="bar"><i style="width:${r.pct || 0}%"></i></div>` : ''}</div>
       ${act}</div>`;
   }).join('');
   if (selected && curView === 'detail') renderDetail();
+  paintPreview();
 }
 function renderSeratoNote() {
   const n = state.serato_pending, el = $('#serato-note'), on = state.settings.serato_enabled && (n > 0 || state.serato_running);
@@ -514,11 +559,12 @@ function dlBadge(t) {
 function rows(list, target) {
   const queued = new Set((state?.downloads || []).map(r => r.track.key));
   target.innerHTML = list.map((t, i) => `<div class="row">
-    ${thumb(t)}
+    ${playThumb(t, t.key, `previewList(${i}, '${target.id}')`)}
     <div class="t"><b title="${esc(t.title)}">${esc(t.title)}</b><div class="sub"><span class="plat ${t.platform}"></span>${esc(t.uploader)}${t.created ? ' · ' + esc(t.created) : ''}${t.duration ? ' · ' + fmtDur(t.duration) : ''}${t.tag ? ' · ' + esc(t.tag) : ''} · <a href="${link(t.url)}" target="_blank">open ↗</a></div></div>
     ${badge(t)}
     <button class="dlbtn ${queued.has(t.key) ? 'done' : ''}" data-i="${i}" onclick="downloadOne(this, '${target.id}')" title="${queued.has(t.key) ? 'Already in Downloads' : 'Download'}"><svg><use href="#${queued.has(t.key) ? 'i-check' : 'i-down'}"/></svg></button>
   </div>`).join('') || '<div class="empty">No matches. Try another word, a wider time window, or switch off the keyword filter.</div>';
+  paintPreview();
 }
 async function doSearch() {
   if (searching) return;
@@ -667,6 +713,85 @@ async function seratoRebuild() { try { const r = await api('/api/serato_rebuild'
 async function exportCsv() { try { const r = await api('/api/export'); toast('Saved ' + r.path, 5000); } catch (e) { toast(e.message, 5000); } }
 async function clearAll() { if (confirm('Clear the whole download history? Files are kept.')) { await api('/api/clear_all'); refresh(); } }
 async function resetSettings() { if (confirm('Reset all settings to defaults? Accounts stay signed in.')) { await api('/api/reset_settings'); await refresh(); renderSettings(); toast('Settings reset'); } }
+
+// ---------------- preview player (one track at a time; listening only, nothing is saved)
+const audio = new Audio();
+let pv = null;   // {key, title, uploader, artwork, src, seekable, offset, duration, loading}
+function playThumb(t, key, onclick) {
+  return `<div class="pwrap" data-pkey="${esc(key)}">${thumb(t)}<button class="play" title="Preview" onclick="${onclick}"><svg><use href="#i-play"/></svg></button><span class="prog"><i></i></span></div>`;
+}
+function previewList(i, listId) {
+  const t = (listId === 'likes-results' ? likes : results)[i];
+  if (t) preview(t.key, {track: t}, t);
+}
+function previewRec(id) {
+  const r = state.downloads.find(x => x.id === id);
+  if (r) preview('rec:' + id, {id}, r.track);
+}
+async function preview(key, body, t) {
+  if (pv && pv.key === key) { pvToggle(); return; }
+  stopPreview();
+  const mine = pv = {key, title: t.title, uploader: t.uploader, artwork: t.artwork, platform: t.platform,
+                     duration: t.duration || 0, offset: 0, seekable: true, loading: true};
+  paintPreview(true);
+  try {
+    const r = await api('/api/preview', body);
+    if (pv !== mine) return;
+    Object.assign(pv, {src: r.src, seekable: r.seekable, duration: r.duration || pv.duration});
+    audio.src = r.src;
+    await audio.play();
+  } catch (e) {
+    if (pv !== mine || e.name === 'AbortError') return;
+    stopPreview(); toast('Preview failed: ' + e.message, 5000);
+  }
+}
+function pvToggle() {
+  if (!pv || !pv.src) return;
+  if (audio.paused) audio.play().catch(() => {}); else audio.pause();
+}
+function stopPreview() {
+  pv = null; audio.pause(); audio.removeAttribute('src'); audio.load();
+  paintPreview(true);
+}
+const pvNow = () => pv ? pv.offset + (audio.currentTime || 0) : 0;
+const pvLen = () => !pv ? 0 : (pv.seekable && isFinite(audio.duration) && audio.duration) || pv.duration || 0;
+function pvSeek(sec) {
+  if (!pv || !pv.src) return;
+  sec = Math.max(0, Math.min(sec, (pvLen() || sec + 1) - 1));
+  if (pv.seekable) { audio.currentTime = sec; return; }
+  pv.offset = Math.floor(sec); pv.loading = true;   // a joined-up stream: ask for it from that point
+  audio.src = pv.src + '?t=' + pv.offset; audio.play().catch(() => {});
+  paintPreview();
+}
+$('#pv-seek').onclick = e => { const b = e.currentTarget.getBoundingClientRect(); pvSeek((e.clientX - b.left) / b.width * pvLen()); };
+function paintPreview(full) {
+  const on = !!pv, playing = on && !audio.paused && !pv.loading, len = pvLen(), pct = len ? Math.min(100, pvNow() / len * 100) : 0;
+  document.querySelectorAll('.pwrap').forEach(w => {
+    const me = on && w.dataset.pkey === pv.key;
+    w.classList.toggle('on', me); w.classList.toggle('loading', me && pv.loading);
+    w.querySelector('.play use').setAttribute('href', me && playing ? '#i-pause' : '#i-play');
+    w.querySelector('.prog i').style.width = me ? pct + '%' : '0';
+  });
+  $('#player').classList.toggle('hidden', !on);
+  if (!on) return;
+  if (full) {
+    $('#pv-art').innerHTML = thumb(pv);
+    $('#pv-title').textContent = pv.title; $('#pv-title').title = pv.title;
+    $('#pv-sub').innerHTML = `<span class="plat ${esc(pv.platform)}"></span>${esc(pv.uploader)}`;
+  }
+  $('#pv-btn').innerHTML = `<svg><use href="#${playing || pv.loading ? 'i-pause' : 'i-play'}"/></svg>`;
+  $('#pv-cur').textContent = fmtDur(Math.floor(pvNow())) || '0:00';
+  $('#pv-dur').textContent = fmtDur(Math.floor(len)) || '-:--';
+  $('#pv-fill').style.width = pct + '%';
+}
+audio.addEventListener('playing', () => { if (pv) { pv.loading = false; paintPreview(); } });
+audio.addEventListener('waiting', () => { if (pv) { pv.loading = true; paintPreview(); } });
+for (const ev of ['pause', 'timeupdate', 'durationchange']) audio.addEventListener(ev, () => paintPreview());
+audio.addEventListener('ended', stopPreview);
+audio.addEventListener('error', () => { if (pv && pv.src) { stopPreview(); toast('Couldn\'t play this preview - the site may have refused the stream', 5000); } });
+document.addEventListener('keydown', e => {   // space = play / pause, unless typing
+  if (e.code === 'Space' && pv && !/^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(e.target.tagName)) { e.preventDefault(); pvToggle(); }
+});
 
 refresh();
 </script>

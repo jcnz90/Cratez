@@ -25,10 +25,12 @@ import html
 import json
 import logging
 import logging.handlers
+import mimetypes
 import os
 import platform
 import random
 import re
+import secrets
 import shutil
 import struct
 import subprocess
@@ -1391,6 +1393,183 @@ class Collector:
                 self.state["running"] = False
 
 
+# ------------------------------------------------------------------------------ previews
+
+class Previews:
+    """The play buttons: a track's own stream (or a finished download) is handed to the window as a
+    short-lived /api/preview/<token> address that this server plays from. Listening only - nothing is
+    saved. Tokens come from a POST (our page only), so other web pages can't use the endpoint."""
+    TTL = 600           # stream addresses from the sites expire, so look them up again after a while
+    FORMAT = "mp3-128/bestaudio[acodec=mp3][protocol^=http]/bestaudio[protocol^=http]/bestaudio[acodec=mp3]/bestaudio/best"
+    CHUNK = 64 * 1024
+
+    def __init__(self, sites: Sites, downloads: Downloads):
+        self.sites, self.downloads = sites, downloads
+        self.lock = threading.Lock()
+        self.items: dict[str, dict] = {}     # token -> what to play
+
+    def _keep(self, entry: dict, key: str) -> dict:
+        now = time.time()
+        with self.lock:
+            for tok in [k for k, e in self.items.items() if now - e["at"] > self.TTL]:
+                del self.items[tok]
+            for tok, e in self.items.items():    # the same track again: reuse its token
+                if e["key"] == key:
+                    entry = e
+                    break
+            else:
+                tok = secrets.token_urlsafe(18)
+                entry.update(key=key, at=now)
+                self.items[tok] = entry
+        return {"src": f"/api/preview/{tok}", "seekable": entry["kind"] != "hls",
+                "duration": entry.get("duration") or 0}
+
+    def get(self, token: str) -> dict | None:
+        with self.lock:
+            e = self.items.get(token)
+        return e if e and time.time() - e["at"] <= self.TTL else None
+
+    def for_record(self, rec_id: str) -> dict:
+        """A Downloads row: the saved file when it's there, else the track's stream."""
+        rec = self.downloads.find(rec_id or "")
+        if not rec:
+            raise ValueError("That download is no longer in the list")
+        files = [Path(f) for f in rec.get("files") or []] + ([Path(rec["path"])] if rec.get("path") else [])
+        f = next((f for f in files if f.is_file() and f.suffix.lower() in AUDIO_EXT), None)
+        if f:
+            return self._keep({"kind": "file", "path": str(f), "duration": rec["track"].get("duration") or 0},
+                              f"file:{f}")
+        return self.for_track(rec["track"])
+
+    def for_track(self, t: dict) -> dict:
+        url = str(t.get("url") or "")
+        platform = platform_of(url)
+        if not platform:
+            raise ValueError("Previews play SoundCloud, Bandcamp and hearthis.at tracks")
+        key = f"{t.get('key') or url}"
+        with self.lock:   # looked up recently: no need to ask the site again
+            if any(e["key"] == key and time.time() - e["at"] <= self.TTL for e in self.items.values()):
+                return self._keep({}, key)
+        if platform == "soundcloud":
+            try:
+                self.sites.sc()     # sign-in header in place, so Go+ / private links play for their owner
+            except Exception as e:
+                log.warning("SoundCloud sign-in not applied: %s", e)
+        opts = {**self.sites.ydl_opts(), "format": self.FORMAT, "noplaylist": True, "extract_flat": "in_playlist"}
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if info and info.get("_type") in ("playlist", "multi_video"):    # an album or set: its first track
+                first = next((e for e in info.get("entries") or [] if e), None)
+                info = first and ydl.extract_info(first.get("url") or first.get("webpage_url"), download=False)
+        if not info or not info.get("url"):
+            raise ValueError("No playable stream for this track")
+        proto = info.get("protocol") or ""
+        kind = "hls" if proto.startswith("m3u8") else "http" if proto in ("http", "https", "") else None
+        if not kind:
+            raise ValueError(f"Can't preview this stream ({proto})")
+        if kind == "hls" and not FFMPEG:
+            raise ValueError("This track only streams in pieces - previews of it need ffmpeg")
+        return self._keep({"kind": kind, "url": info["url"], "headers": info.get("http_headers") or {},
+                           "ext": info.get("ext") or "", "acodec": info.get("acodec") or "",
+                           "duration": int(info.get("duration") or t.get("duration") or 0)}, key)
+
+    # --- serving (called from the HTTP handler's thread)
+    def serve(self, h, entry: dict, query: str):
+        try:
+            if entry["kind"] == "file":
+                return self.serve_file(h, Path(entry["path"]))
+            if entry["kind"] == "http":
+                return self.serve_http(h, entry)
+            m = re.search(r"(?:^|&)t=(\d+)", query)
+            return self.serve_hls(h, entry, int(m.group(1)) if m else 0)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            pass    # the window stopped listening (pause, another track, closed)
+
+    @staticmethod
+    def byte_range(header: str | None, size: int) -> tuple[int, int] | None:
+        m = re.match(r"bytes=(\d*)-(\d*)$", (header or "").strip())
+        if not m or not (m.group(1) or m.group(2)):
+            return None
+        if m.group(1):
+            start, end = int(m.group(1)), int(m.group(2)) if m.group(2) else size - 1
+        else:
+            start, end = max(0, size - int(m.group(2))), size - 1
+        end = min(end, size - 1)
+        return (start, end) if start <= end else None
+
+    def serve_file(self, h, path: Path):
+        size = path.stat().st_size
+        rng = self.byte_range(h.headers.get("Range"), size)
+        start, end = rng or (0, size - 1)
+        h.send_response(206 if rng else 200)
+        h.send_header("Content-Type", mimetypes.guess_type(path.name)[0] or "application/octet-stream")
+        h.send_header("Accept-Ranges", "bytes")
+        h.send_header("Content-Length", str(end - start + 1))
+        if rng:
+            h.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        h.send_header("Cache-Control", "no-store")
+        h.end_headers()
+        with open(path, "rb") as fh:
+            fh.seek(start)
+            left = end - start + 1
+            while left > 0:
+                chunk = fh.read(min(self.CHUNK, left))
+                if not chunk:
+                    break
+                h.wfile.write(chunk)
+                left -= len(chunk)
+
+    def serve_http(self, h, entry: dict):
+        headers = {"User-Agent": UA, **entry["headers"]}
+        if h.headers.get("Range"):
+            headers["Range"] = h.headers["Range"]
+        with self.sites.ydl().urlopen(Request(entry["url"], headers=headers)) as r:
+            h.send_response(r.status)
+            ctype = r.headers.get("Content-Type") or ""
+            if not ctype.startswith("audio/"):
+                ctype = mimetypes.guess_type("x." + entry["ext"])[0] or "audio/mpeg"
+            h.send_header("Content-Type", ctype)
+            for name in ("Content-Length", "Content-Range", "Accept-Ranges"):
+                if r.headers.get(name):
+                    h.send_header(name, r.headers[name])
+            h.send_header("Cache-Control", "no-store")
+            h.end_headers()
+            while chunk := r.read(self.CHUNK):
+                h.wfile.write(chunk)
+
+    def serve_hls(self, h, entry: dict, start: int):
+        """Segmented streams (most of SoundCloud): ffmpeg joins the pieces into one playable stream.
+        It can't be byte-seeked, so the window asks for ?t=<seconds> to start further in."""
+        cmd = [FFMPEG, "-nostdin", "-loglevel", "error"]
+        if start > 0:
+            cmd += ["-ss", str(start)]
+        hdrs = "".join(f"{k}: {v}\r\n" for k, v in entry["headers"].items())
+        if hdrs:
+            cmd += ["-headers", hdrs]
+        cmd += ["-i", entry["url"], "-vn", "-map", "0:a:0"]
+        # MP3 out, which every browser plays: copied when it already is, else re-encoded (AAC / Opus)
+        cmd += ["-c:a", "copy"] if entry["acodec"] == "mp3" else ["-c:a", "libmp3lame", "-b:a", "192k"]
+        cmd += ["-f", "mp3"]
+        proc = subprocess.Popen(cmd + ["pipe:1"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                creationflags=NO_WINDOW)
+        try:
+            first = proc.stdout.read(self.CHUNK)
+            if not first:
+                h.send_response(502)
+                h.end_headers()
+                return
+            h.send_response(200)
+            h.send_header("Content-Type", "audio/mpeg")
+            h.send_header("Cache-Control", "no-store")
+            h.end_headers()
+            h.wfile.write(first)
+            while chunk := proc.stdout.read(self.CHUNK):
+                h.wfile.write(chunk)
+        finally:
+            proc.kill()
+            proc.wait()
+
+
 # ------------------------------------------------------------------------------ the app
 
 class App:
@@ -1403,6 +1582,7 @@ class App:
         self.downloads = Downloads(self.settings, self.sites, self.serato)
         self.serato.history = self.downloads.done_with_times
         self.collector = Collector(self.settings, self.sites, self.downloads, self.library)
+        self.previews = Previews(self.sites, self.downloads)
         self.last_ping = time.time()
         self.bye_at = 0.0               # the window said it's closing (a reload pings again right away)
         self.quit = threading.Event()
@@ -1632,6 +1812,15 @@ def make_handler(app: App):
                 app.last_ping = time.time()
                 m = re.search(r"(?:^|&)since=(\d+)", query)
                 return self.send_json(app.state(int(m.group(1)) if m else None))
+            if path.startswith("/api/preview/"):   # the <audio> element can't send our header: a token instead
+                entry = app.previews.get(path.rsplit("/", 1)[1])
+                if not entry:
+                    return self.send_json({"error": "preview expired"}, 404)
+                try:
+                    return app.previews.serve(self, entry, query)
+                except Exception as e:
+                    log.warning("preview failed: %s", e)
+                    return self.send_json({"error": "preview failed"}, 502)
             if path in ("/", "/index.html"):
                 page = (UI_DIR / "index.html").read_bytes()
                 self.send_response(200)
@@ -1676,6 +1865,10 @@ def make_handler(app: App):
                                   bool(body.get("only_keywords", True)), body.get("platforms"))
             if route == "/api/download":
                 return {"added": d.add(body.get("tracks") or [], body.get("genre") or "")}
+            if route == "/api/preview":
+                if body.get("id"):
+                    return app.previews.for_record(body["id"])
+                return app.previews.for_track(body.get("track") or {})
             if route == "/api/collect":
                 return {"started": app.collector.run(body.get("genres"))}
             if route == "/api/likes":
