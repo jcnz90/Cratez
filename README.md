@@ -27,6 +27,7 @@
 </p>
 
 - **Search by genre.** Pick House, Amapiano, UK Garage or any genre you set up, and Cratez searches all three sites at once for edits, flips, bootlegs and remixes.
+- **Hear it first.** Hover any track's cover and press play to listen right in Cratez, like Deemix. One track plays at a time, the player bar at the bottom lets you jump ahead to the drop, and the space bar pauses. Nothing is saved until you press download.
 - **One-click downloads.** You get the uploader's original file (WAV/MP3) when they offer it, with title, artist, genre and cover art filled in.
 - **Straight into Serato.** Every track goes into a `Cratez › Genre` crate, and the newest ones also go into `Cratez › Latest`. You don't have to drag anything in.
 - **No doubles.** Cratez reads your Serato library and marks tracks you already own with **IN SERATO**, and the weekly Collect skips them.
